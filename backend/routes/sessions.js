@@ -78,7 +78,8 @@ router.get('/sessions/:id', async (req, res) => {
     }
     const [attendances] = await pool.query(
       `SELECT s.id AS student_id, s.full_name, s.student_code,
-              a.id AS attendance_id, a.is_present, a.lesson_score, a.lesson_grade, a.teacher_note
+              a.id AS attendance_id, a.is_present, a.lesson_score, a.lesson_grade,
+              a.exercise_score, a.teacher_note
        FROM students s
        LEFT JOIN attendances a ON a.session_id = ? AND a.student_id = s.id
        WHERE s.class_id = ?

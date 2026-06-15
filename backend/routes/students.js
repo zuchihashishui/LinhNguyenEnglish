@@ -154,7 +154,8 @@ router.get('/students/:id/stats', async (req, res) => {
          COUNT(*) AS total_sessions,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
-         ROUND(AVG(a.lesson_score), 2) AS avg_lesson_score
+         ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
+         ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
        FROM attendances a
        WHERE a.student_id = ?`,
       [req.params.id]

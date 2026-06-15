@@ -41,6 +41,12 @@ router.post('/sessions/:id/attendances', async (req, res) => {
         return res.status(400).json({ error: 'Điểm bài cũ phải là số nguyên từ 1 đến 10' });
       }
     }
+    if (it.exercise_score !== null && it.exercise_score !== undefined && it.exercise_score !== '') {
+      const m = Number(it.exercise_score);
+      if (!Number.isInteger(m) || m < 1 || m > 10) {
+        return res.status(400).json({ error: 'Điểm bài tập phải là số nguyên từ 1 đến 10' });
+      }
+    }
     if (it.lesson_grade && !ALLOWED_GRADES.includes(it.lesson_grade)) {
       return res.status(400).json({ error: `Xếp loại không hợp lệ: ${it.lesson_grade}` });
     }
@@ -53,19 +59,22 @@ router.post('/sessions/:id/attendances', async (req, res) => {
       const isPresent = it.is_present ? 1 : 0;
       const score = (it.lesson_score === '' || it.lesson_score === undefined || it.lesson_score === null)
         ? null : Number(it.lesson_score);
+      const exScore = (it.exercise_score === '' || it.exercise_score === undefined || it.exercise_score === null)
+        ? null : Number(it.exercise_score);
       const grade = it.lesson_grade || null;
       const note = it.teacher_note || null;
 
       await conn.query(
-        `INSERT INTO attendances (session_id, student_id, is_present, lesson_score, lesson_grade, teacher_note)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO attendances (session_id, student_id, is_present, lesson_score, lesson_grade, exercise_score, teacher_note)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            is_present = VALUES(is_present),
            lesson_score = VALUES(lesson_score),
            lesson_grade = VALUES(lesson_grade),
+           exercise_score = VALUES(exercise_score),
            teacher_note = VALUES(teacher_note),
            updated_at = CURRENT_TIMESTAMP`,
-        [sessionId, it.student_id, isPresent, score, grade, note]
+        [sessionId, it.student_id, isPresent, score, grade, exScore, note]
       );
     }
     await conn.commit();

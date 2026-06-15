@@ -48,6 +48,47 @@ router.post('/', requireTeacher, requireAdmin, async (req, res) => {
   }
 });
 
+// PUT /api/teachers/:id  - sửa họ tên + quyền admin (chỉ admin)
+router.put('/:id', requireTeacher, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { full_name, is_admin } = req.body || {};
+  try {
+    const [rows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Không tìm thấy giáo viên' });
+    }
+    const fields = [];
+    const params = [];
+    if (full_name !== undefined) {
+      if (!String(full_name).trim()) {
+        return res.status(400).json({ error: 'Họ tên không được để trống' });
+      }
+      fields.push('full_name = ?');
+      params.push(String(full_name).trim());
+    }
+    if (is_admin !== undefined) {
+      // Không cho tự hạ quyền chính mình
+      if (id === req.teacher.id && !is_admin) {
+        return res.status(400).json({ error: 'Không thể tự hạ quyền admin của chính mình' });
+      }
+      fields.push('is_admin = ?');
+      params.push(is_admin ? 1 : 0);
+    }
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'Không có trường nào để cập nhật' });
+    }
+    params.push(id);
+    await pool.query('UPDATE teachers SET ' + fields.join(', ') + ' WHERE id = ?', params);
+
+    const [updated] = await pool.query(
+      'SELECT id, username, full_name, is_admin, created_at FROM teachers WHERE id = ?', [id]
+    );
+    res.json(updated[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/teachers/:id  - chỉ admin, không cho xoá chính mình
 router.delete('/:id', requireTeacher, requireAdmin, async (req, res) => {
   const id = Number(req.params.id);

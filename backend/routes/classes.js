@@ -66,6 +66,58 @@ router.post('/', async (req, res) => {
   }
 });
 
+// PUT /api/classes/:id
+// - Admin: sửa mọi trường (name, grade_level, teacher_id)
+// - Teacher thường: chỉ sửa được lớp của mình, không đổi teacher_id
+router.put('/:id', async (req, res) => {
+  const { name, grade_level, teacher_id } = req.body || {};
+  try {
+    const [rows] = await pool.query('SELECT teacher_id FROM classes WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Không tìm thấy lớp' });
+    }
+    if (!req.teacher.is_admin && Number(rows[0].teacher_id) !== req.teacher.id) {
+      return res.status(403).json({ error: 'Bạn không có quyền sửa lớp này' });
+    }
+
+    const fields = [];
+    const params = [];
+    if (name !== undefined) {
+      if (!name || !String(name).trim()) {
+        return res.status(400).json({ error: 'Tên lớp không được để trống' });
+      }
+      fields.push('name = ?');
+      params.push(String(name).trim());
+    }
+    if (grade_level !== undefined) {
+      fields.push('grade_level = ?');
+      params.push(grade_level ? String(grade_level).trim() : null);
+    }
+    if (teacher_id !== undefined) {
+      // Chỉ admin mới được đổi giáo viên phụ trách
+      if (!req.teacher.is_admin) {
+        return res.status(403).json({ error: 'Chỉ quản trị viên mới được đổi giáo viên phụ trách' });
+      }
+      fields.push('teacher_id = ?');
+      params.push(teacher_id ? Number(teacher_id) : null);
+    }
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'Không có trường nào để cập nhật' });
+    }
+    params.push(req.params.id);
+    await pool.query('UPDATE classes SET ' + fields.join(', ') + ' WHERE id = ?', params);
+
+    const [updated] = await pool.query(
+      `SELECT c.id, c.name, c.grade_level, c.teacher_id, c.created_at, t.full_name AS teacher_name
+       FROM classes c LEFT JOIN teachers t ON t.id = c.teacher_id WHERE c.id = ?`,
+      [req.params.id]
+    );
+    res.json(updated[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/classes/:id
 // - Teacher thường chỉ xoá được lớp của mình
 router.delete('/:id', async (req, res) => {

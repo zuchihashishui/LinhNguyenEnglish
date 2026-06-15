@@ -2,7 +2,7 @@
 // Frontend SPA đơn giản cho hệ thống điểm danh Linh English
 // =====================================================
 
-console.log('[Linh English] app.js v22 đang nạp...');
+console.log('[Linh English] app.js v23 đang nạp...');
 
 const API = '/api';
 
@@ -508,10 +508,10 @@ async function renderHome() {
       nameStrong.textContent = c.name;
       const nameHint = document.createElement('div');
       nameHint.style.cssText = 'font-size:12px;color:#6b7280';
-      nameHint.textContent = 'Click để điểm danh nhanh';
+      nameHint.textContent = 'Click để xem chi tiết lớp';
       tdName.appendChild(nameStrong);
       tdName.appendChild(nameHint);
-      tdName.addEventListener('click', goAttendance);
+      tdName.addEventListener('click', openClass);
       tr.appendChild(tdName);
 
       const tdGrade = document.createElement('td');
@@ -551,6 +551,13 @@ async function renderHome() {
       btnManage.textContent = '👥 Quản lý';
       btnManage.addEventListener('click', openClass);
       actionsCell.appendChild(btnManage);
+
+      const btnEditClass = document.createElement('button');
+      btnEditClass.className = 'btn btn-sm';
+      btnEditClass.textContent = '✏️ Sửa';
+      btnEditClass.title = 'Sửa tên/cấp học/giáo viên phụ trách';
+      btnEditClass.addEventListener('click', function (e) { e.stopPropagation(); openEditClassDialog(c, teachers, render); });
+      actionsCell.appendChild(btnEditClass);
 
       const btnDel = document.createElement('button');
       btnDel.className = 'btn btn-sm btn-danger';
@@ -1061,7 +1068,8 @@ function paintSessionEditor(editable) {
     { w: '40px',  label: '#' },
     { w: null,    label: 'Họ tên' },
     { w: '90px',  label: 'Có mặt' },
-    { w: '90px',  label: 'Điểm (1-10)' },
+    { w: '90px',  label: 'Điểm bài cũ (1-10)' },
+    { w: '90px',  label: 'Điểm bài tập (1-10)' },
     { w: '150px', label: 'Xếp loại' },
     { w: null,    label: 'Nhận xét' },
   ];
@@ -1149,6 +1157,20 @@ function paintSessionEditor(editable) {
       tdScore.appendChild(scoreInp);
       tr.appendChild(tdScore);
 
+      // Điểm bài tập (exercise_score) - input song song, KHÔNG ảnh hưởng xếp loại
+      const tdExScore = document.createElement('td');
+      const exInp = document.createElement('input');
+      exInp.type = 'number';
+      exInp.min = '1';
+      exInp.max = '10';
+      exInp.step = '1';
+      exInp.value = a.exercise_score != null ? String(a.exercise_score) : '';
+      exInp.style.cssText = 'width:70px;padding:4px;border:1px solid #d1d5db;border-radius:4px';
+      exInp.placeholder = 'BT';
+      exInp.addEventListener('input', function () { a.exercise_score = exInp.value; });
+      tdExScore.appendChild(exInp);
+      tr.appendChild(tdExScore);
+
       // Xếp loại
       const tdGrade = document.createElement('td');
       const sel = document.createElement('select');
@@ -1186,6 +1208,10 @@ function paintSessionEditor(editable) {
       const tdS = document.createElement('td');
       tdS.textContent = a.lesson_score != null ? String(a.lesson_score) : '—';
       tr.appendChild(tdS);
+
+      const tdE = document.createElement('td');
+      tdE.textContent = a.exercise_score != null ? String(a.exercise_score) : '—';
+      tr.appendChild(tdE);
 
       const tdG = document.createElement('td');
       tdG.textContent = a.lesson_grade || '—';
@@ -1254,6 +1280,8 @@ function paintSessionEditor(editable) {
           is_present: a.is_present == 1,
           lesson_score: (a.lesson_score === '' || a.lesson_score == null || a.lesson_score === undefined)
             ? null : Number(a.lesson_score),
+          exercise_score: (a.exercise_score === '' || a.exercise_score == null || a.exercise_score === undefined)
+            ? null : Number(a.exercise_score),
           lesson_grade: a.lesson_grade || null,
           teacher_note: a.teacher_note || null,
         }));
@@ -1402,7 +1430,8 @@ async function renderClassStats(parts) {
           el('th', { style: { textAlign: 'center' } }, 'Chưa tick'),
           el('th', { style: { textAlign: 'center' } }, 'Tổng buổi'),
           el('th', { style: { textAlign: 'center' } }, 'Tỉ lệ chuyên cần'),
-          el('th', { style: { textAlign: 'center' } }, 'Điểm TB'),
+          el('th', { style: { textAlign: 'center' } }, 'ĐTB bài cũ'),
+          el('th', { style: { textAlign: 'center' } }, 'ĐTB bài tập'),
         )
       ));
       const tbody = el('tbody');
@@ -1415,6 +1444,9 @@ async function renderClassStats(parts) {
         );
         const avgCell = s.avg_score != null
           ? el('strong', { style: { color: s.avg_score >= 8 ? '#059669' : s.avg_score >= 5 ? '#d97706' : '#dc2626' } }, s.avg_score + ' đ')
+          : '—';
+        const avgExCell = s.avg_exercise_score != null
+          ? el('strong', { style: { color: s.avg_exercise_score >= 8 ? '#059669' : s.avg_exercise_score >= 5 ? '#d97706' : '#dc2626' } }, s.avg_exercise_score + ' đ')
           : '—';
         // Tên HS có thể click để xem chi tiết
         const nameLink = el('a', {
@@ -1440,6 +1472,7 @@ async function renderClassStats(parts) {
             bar
           ),
           el('td', { style: { textAlign: 'center' } }, avgCell),
+          el('td', { style: { textAlign: 'center' } }, avgExCell),
         ));
       });
       table.appendChild(tbody);
@@ -1495,6 +1528,7 @@ async function renderStudentStats(parts) {
     const unmarked = total - present - absent; // những buổi chưa tick
     const rate = total > 0 ? Math.round((present / total) * 100) : 0;
     const avgScore = stats.avg_lesson_score;
+    const avgExScore = stats.avg_exercise_score;
 
     const overview = el('div', { class: 'card', style: { background: '#eef2ff', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px' } },
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Tổng buổi'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#4f46e5' } }, String(total))),
@@ -1502,7 +1536,8 @@ async function renderStudentStats(parts) {
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Vắng'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#dc2626' } }, String(absent))),
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Chưa tick'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: unmarked > 0 ? '#d97706' : '#6b7280' } }, String(unmarked))),
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Tỉ lệ chuyên cần'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, rate + '%')),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Điểm bài cũ TB'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, avgScore != null ? avgScore + ' đ' : '—')),
+      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'ĐTB bài cũ'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, avgScore != null ? avgScore + ' đ' : '—')),
+      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'ĐTB bài tập'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, avgExScore != null ? avgExScore + ' đ' : '—')),
     );
     main.appendChild(overview);
 
@@ -1522,6 +1557,7 @@ async function renderStudentStats(parts) {
           title: s.title,
           is_present: row ? row.is_present : null,
           lesson_score: row ? row.lesson_score : null,
+          exercise_score: row ? row.exercise_score : null,
           lesson_grade: row ? row.lesson_grade : null,
           teacher_note: row ? row.teacher_note : null,
         });
@@ -1541,7 +1577,8 @@ async function renderStudentStats(parts) {
           el('th', {}, 'Ngày'),
           el('th', {}, 'Chủ đề'),
           el('th', { style: { textAlign: 'center' } }, 'Trạng thái'),
-          el('th', { style: { textAlign: 'center' } }, 'Điểm'),
+          el('th', { style: { textAlign: 'center' } }, 'Điểm bài cũ'),
+          el('th', { style: { textAlign: 'center' } }, 'Điểm bài tập'),
           el('th', { style: { textAlign: 'center' } }, 'Xếp loại'),
           el('th', {}, 'Nhận xét'),
           el('th', { style: { textAlign: 'center', width: '90px' } }, ''),
@@ -1559,6 +1596,7 @@ async function renderStudentStats(parts) {
           el('td', {}, d.title || '—'),
           el('td', { style: { textAlign: 'center' } }, badge),
           el('td', { style: { textAlign: 'center' } }, d.lesson_score != null ? String(d.lesson_score) : '—'),
+          el('td', { style: { textAlign: 'center' } }, d.exercise_score != null ? String(d.exercise_score) : '—'),
           el('td', { style: { textAlign: 'center' } }, d.lesson_grade || '—'),
           el('td', { style: { whiteSpace: 'pre-wrap' } }, d.teacher_note || '—'),
           el('td', { style: { textAlign: 'center' } },
@@ -1839,17 +1877,21 @@ async function renderTeachers() {
         el('td', {},
           isMe
             ? el('span', { style: { color: '#9ca3af', fontSize: '13px' } }, '—')
-            : el('button', { class: 'btn btn-sm btn-danger',
-                onClick: async () => {
-                  if (!confirm('Xoá giáo viên "' + t.full_name + '" (@' + t.username + ')?\n\n' +
-                    'Lưu ý: Lớp do GV này phụ trách sẽ được set teacher_id = NULL (không xoá lớp).')) return;
-                  try {
-                    await api('/teachers/' + t.id, { method: 'DELETE' });
-                    toast('Đã xoá giáo viên', 'success');
-                    renderTeachers();
-                  } catch (err) { toast(err.message, 'error'); }
-                }
-              }, 'Xoá')
+            : el('div', { style: { display: 'flex', gap: '4px' } },
+                el('button', { class: 'btn btn-sm',
+                  onClick: () => openEditTeacherDialog(t, renderTeachers) }, '✏️ Sửa'),
+                el('button', { class: 'btn btn-sm btn-danger',
+                  onClick: async () => {
+                    if (!confirm('Xoá giáo viên "' + t.full_name + '" (@' + t.username + ')?\n\n' +
+                      'Lưu ý: Lớp do GV này phụ trách sẽ được set teacher_id = NULL (không xoá lớp).')) return;
+                    try {
+                      await api('/teachers/' + t.id, { method: 'DELETE' });
+                      toast('Đã xoá giáo viên', 'success');
+                      renderTeachers();
+                    } catch (err) { toast(err.message, 'error'); }
+                  }
+                }, 'Xoá')
+              )
         ),
       ));
     });
@@ -1859,6 +1901,173 @@ async function renderTeachers() {
   } catch (err) {
     main.innerHTML = `<div class="card empty">Lỗi: ${err.message}</div>`;
   }
+}
+
+// =====================================================
+// Modal: Sửa lớp học
+// =====================================================
+async function openEditClassDialog(c, teachers, onDone) {
+  // Luôn lấy danh sách GV mới nhất nếu là admin
+  if (currentTeacher.is_admin) {
+    try { teachers = await api('/teachers'); } catch (_) { /* giữ nguyên */ }
+  }
+  // Tạo overlay
+  const overlay = el('div', {
+    style: {
+      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
+    },
+    onClick: (e) => { if (e.target === overlay) closeModal(); }
+  });
+  const modal = el('div', {
+    style: {
+      background: '#fff', borderRadius: '12px', padding: '24px',
+      maxWidth: '480px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+    }
+  });
+  modal.appendChild(el('h2', { style: { marginTop: 0, color: '#4f46e5' } }, '✏️ Sửa lớp #' + c.id));
+  modal.appendChild(el('p', { style: { color: '#6b7280', fontSize: '14px' } },
+    'Cập nhật tên lớp, cấp học, giáo viên phụ trách.'));
+
+  // Tên
+  const nameInp = el('input', { type: 'text', id: 'editClassName', value: c.name || '', required: true });
+  modal.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Tên lớp *'), nameInp));
+
+  // Cấp học
+  const gradeInp = el('input', { type: 'text', id: 'editClassGrade', value: c.grade_level || '', placeholder: 'VD: Lớp 10' });
+  modal.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Cấp học'), gradeInp));
+
+  // Giáo viên (chỉ admin mới đổi được)
+  if (currentTeacher.is_admin) {
+    const sel = el('select', { id: 'editClassTeacher' });
+    sel.appendChild(el('option', { value: '' }, '— Chưa gán —'));
+    teachers.forEach((t) => {
+      const opt = el('option', { value: t.id }, t.full_name + ' (@' + t.username + ')');
+      if (Number(t.id) === Number(c.teacher_id)) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    modal.appendChild(el('div', { class: 'form-row' },
+      el('label', {}, 'Giáo viên phụ trách (admin)'), sel));
+  } else {
+    modal.appendChild(el('p', { style: { fontSize: '13px', color: '#9ca3af' } },
+      'Giáo viên phụ trách: ' + (c.teacher_name || '—') + ' (chỉ admin mới đổi được)'));
+  }
+
+  // Buttons
+  const btnRow = el('div', { style: { display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' } });
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: closeModal }, 'Huỷ');
+  const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
+  btnSave.addEventListener('click', async function () {
+    const newName = nameInp.value.trim();
+    if (!newName) { toast('Tên lớp không được để trống', 'error'); return; }
+    const body = { name: newName, grade_level: gradeInp.value.trim() };
+    if (currentTeacher.is_admin) {
+      const sel = $('#editClassTeacher');
+      body.teacher_id = sel.value ? Number(sel.value) : null;
+    }
+    btnSave.disabled = true; btnSave.textContent = '⏳ Đang lưu...';
+    try {
+      await api('/classes/' + c.id, { method: 'PUT', body });
+      toast('Đã cập nhật lớp', 'success');
+      closeModal();
+      if (typeof onDone === 'function') onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+      btnSave.disabled = false; btnSave.textContent = '💾 Lưu';
+    }
+  });
+  btnRow.appendChild(btnCancel);
+  btnRow.appendChild(btnSave);
+  modal.appendChild(btnRow);
+  overlay.appendChild(modal);
+
+  document.body.appendChild(overlay);
+  nameInp.focus();
+  nameInp.select();
+  function closeModal() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+  // Esc to close
+  const onKey = (e) => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+}
+
+// =====================================================
+// Modal: Sửa giáo viên
+// =====================================================
+function openEditTeacherDialog(t, onDone) {
+  const overlay = el('div', {
+    style: {
+      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
+    },
+    onClick: (e) => { if (e.target === overlay) closeModal(); }
+  });
+  const modal = el('div', {
+    style: {
+      background: '#fff', borderRadius: '12px', padding: '24px',
+      maxWidth: '480px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+    }
+  });
+  modal.appendChild(el('h2', { style: { marginTop: 0, color: '#4f46e5' } }, '✏️ Sửa giáo viên'));
+  modal.appendChild(el('p', { style: { color: '#6b7280', fontSize: '14px' } },
+    'Username và mật khẩu không thể sửa tại đây (liên hệ super admin nếu cần reset).'));
+
+  // Họ tên
+  const nameInp = el('input', { type: 'text', id: 'editTeacherName', value: t.full_name || '', required: true });
+  modal.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Họ tên *'), nameInp));
+
+  // Username (readonly)
+  modal.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Tên đăng nhập'),
+    el('input', { type: 'text', value: t.username || '', disabled: true,
+      style: { background: '#f3f4f6', cursor: 'not-allowed' } })
+  ));
+
+  // Vai trò
+  const isMe = t.id === currentTeacher.id;
+  const roleSel = el('select', { id: 'editTeacherRole' });
+  roleSel.appendChild(el('option', { value: '0', selected: !(t.is_admin == 1 || t.is_admin === true) ? 'selected' : null }, 'Giáo viên thường'));
+  roleSel.appendChild(el('option', { value: '1', selected:  (t.is_admin == 1 || t.is_admin === true) ? 'selected' : null }, 'Quản trị viên (admin)'));
+  if (isMe) {
+    roleSel.disabled = true;
+    roleSel.title = 'Không thể tự hạ quyền chính mình';
+  }
+  modal.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Vai trò' + (isMe ? ' (không thể đổi)' : '')), roleSel));
+
+  // Buttons
+  const btnRow = el('div', { style: { display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' } });
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: closeModal }, 'Huỷ');
+  const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
+  btnSave.addEventListener('click', async function () {
+    const newName = nameInp.value.trim();
+    if (!newName) { toast('Họ tên không được để trống', 'error'); return; }
+    const body = { full_name: newName };
+    if (!isMe) body.is_admin = roleSel.value === '1';
+    btnSave.disabled = true; btnSave.textContent = '⏳ Đang lưu...';
+    try {
+      await api('/teachers/' + t.id, { method: 'PUT', body });
+      toast('Đã cập nhật giáo viên', 'success');
+      closeModal();
+      if (typeof onDone === 'function') onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+      btnSave.disabled = false; btnSave.textContent = '💾 Lưu';
+    }
+  });
+  btnRow.appendChild(btnCancel);
+  btnRow.appendChild(btnSave);
+  modal.appendChild(btnRow);
+  overlay.appendChild(modal);
+
+  document.body.appendChild(overlay);
+  nameInp.focus();
+  nameInp.select();
+  function closeModal() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+  const onKey = (e) => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
 }
 
 // =====================================================

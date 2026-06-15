@@ -50,7 +50,8 @@ router.get('/:id/stats', async (req, res) => {
          s.student_code AS student_code,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
-         ROUND(AVG(a.lesson_score), 2) AS avg_score
+         ROUND(AVG(a.lesson_score), 2)   AS avg_score,
+         ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
        FROM students s
        LEFT JOIN sessions se
          ON se.class_id = s.class_id
@@ -80,6 +81,7 @@ router.get('/:id/stats', async (req, res) => {
         total_marked: total,
         attendance_rate: rate,
         avg_score: r.avg_score != null ? Number(r.avg_score) : null,
+        avg_exercise_score: r.avg_exercise_score != null ? Number(r.avg_exercise_score) : null,
       };
     });
 
