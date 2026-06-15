@@ -1348,12 +1348,24 @@ function paintSessionEditor(editable) {
       tdGrade.appendChild(sel);
       tr.appendChild(tdGrade);
 
-      // Nhận xét
+      // Nhận xét - textarea rộng và cao hơn để dễ gõ
       const tdNote = document.createElement('td');
       const ta = document.createElement('textarea');
-      ta.rows = 1;
+      ta.rows = 2;
       ta.placeholder = 'Nhận xét...';
-      ta.style.cssText = 'width:100%;padding:4px;border:1px solid #d1d5db;border-radius:4px;resize:vertical';
+      ta.style.cssText = [
+        'width:100%',
+        'min-width:240px',
+        'min-height:60px',
+        'padding:8px 10px',
+        'font-size:14px',
+        'line-height:1.5',
+        'font-family:inherit',
+        'border:1px solid #d1d5db',
+        'border-radius:6px',
+        'resize:vertical',
+        'box-sizing:border-box',
+      ].join(';');
       ta.value = a.teacher_note || '';
       ta.addEventListener('input', function () { a.teacher_note = ta.value; scheduleDraftSave(); });
       tdNote.appendChild(ta);
