@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Điểm danh học sinh - Linh English</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="brandHome">📚 Linh English - Điểm danh</div>
+    <nav class="crumbs" id="crumbs"></nav>
+    <div class="user-info" id="userInfo"></div>
+  </header>
+
+  <main id="app">
+    <p class="loading">Đang tải...</p>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // Chống cache cứng: tự thêm timestamp cho app.js
+    document.write('<script src="js/app.js?v=' + Date.now() + '"><\/script>');
+  </script>
+  <script>
+    // Hiện lỗi JS lên màn hình nếu app crash
+    window.addEventListener('error', function (e) {
+      const main = document.getElementById('app');
+      if (main && !main.querySelector('.js-error')) {
+        const d = document.createElement('div');
+        d.className = 'card empty js-error';
+        d.style.color = '#dc2626';
+        d.textContent = '❌ Lỗi JavaScript: ' + (e.message || 'unknown');
+        main.innerHTML = '';
+        main.appendChild(d);
+      }
+    });
+  </script>
+</body>
+</html>
