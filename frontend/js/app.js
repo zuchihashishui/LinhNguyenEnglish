@@ -1097,10 +1097,16 @@ function updateSummary() {
   const sumCard = $('#attendanceSummary');
   if (sumCard) {
     sumCard.innerHTML = `
-      <div style="display:flex; gap:24px; flex-wrap:wrap">
-        <div><strong>Tổng:</strong> ${currentAttendances.length}</div>
-        <div><strong style="color:#059669">Có mặt:</strong> ${present}</div>
-        <div><strong style="color:#dc2626">Vắng:</strong> ${absent}</div>
+      <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center; font-size:15px">
+        <div><strong style="color:#1e3a8a; font-size:18px; font-weight:700">📋 Tổng:</strong>
+          <span style="color:#1e3a8a; font-size:20px; font-weight:700; margin-left:4px">${currentAttendances.length}</span>
+        </div>
+        <div><strong style="color:#047857; font-size:18px; font-weight:700">✓ Có mặt:</strong>
+          <span style="color:#047857; font-size:20px; font-weight:700; margin-left:4px">${present}</span>
+        </div>
+        <div><strong style="color:#b91c1c; font-size:18px; font-weight:700">✕ Vắng:</strong>
+          <span style="color:#b91c1c; font-size:20px; font-weight:700; margin-left:4px">${absent}</span>
+        </div>
       </div>`;
   }
 }
@@ -1205,14 +1211,23 @@ function paintSessionEditor(editable) {
     return;
   }
 
-  // Tóm tắt
+  // Tóm tắt - dùng màu tối đậm, font to, nền nổi bật
   const present = currentAttendances.filter(a => a.is_present == 1).length;
   const absent  = currentAttendances.filter(a => a.is_present == 0).length;
-  const summary = el('div', { class: 'card', id: 'attendanceSummary', style: { background: '#eef2ff' } },
-    el('div', { style: { display: 'flex', gap: '24px', flexWrap: 'wrap' } },
-      el('div', {}, el('strong', {}, 'Tổng: '), currentAttendances.length),
-      el('div', {}, el('strong', { style: { color: '#059669' } }, 'Có mặt: '), present),
-      el('div', {}, el('strong', { style: { color: '#dc2626' } }, 'Vắng: '), absent),
+  const summary = el('div', { class: 'card', id: 'attendanceSummary', style: { background: '#eef2ff', border: '2px solid #c7d2fe' } },
+    el('div', { style: { display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'center' } },
+      el('div', {},
+        el('strong', { style: { color: '#1e3a8a', fontSize: '16px', fontWeight: '700' } }, '📋 Tổng: '),
+        el('span', { style: { color: '#1e3a8a', fontSize: '20px', fontWeight: '700' } }, String(currentAttendances.length))
+      ),
+      el('div', {},
+        el('strong', { style: { color: '#047857', fontSize: '16px', fontWeight: '700' } }, '✓ Có mặt: '),
+        el('span', { style: { color: '#047857', fontSize: '20px', fontWeight: '700' } }, String(present))
+      ),
+      el('div', {},
+        el('strong', { style: { color: '#b91c1c', fontSize: '16px', fontWeight: '700' } }, '✕ Vắng: '),
+        el('span', { style: { color: '#b91c1c', fontSize: '20px', fontWeight: '700' } }, String(absent))
+      ),
     )
   );
   main.appendChild(summary);
