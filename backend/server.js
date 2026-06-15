@@ -10,6 +10,11 @@ const USE_MOCK = process.env.USE_MOCK === '1' || process.env.USE_MOCK === 'true'
 app.use(cors());
 app.use(express.json());
 
+// Health check (đặt TRƯỚC các router có auth để không bị bắt buộc đăng nhập)
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, mode: USE_MOCK ? 'mock' : 'mysql', time: new Date().toISOString() });
+});
+
 // Phục vụ frontend tĩnh (no-cache để phát triển dễ thấy thay đổi)
 app.use(express.static(path.join(__dirname, '..', 'frontend'), {
   setHeaders: (res) => { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); }
@@ -54,10 +59,7 @@ if (USE_MOCK) {
   app.use('/api/ai', aiRouter);
 }
 
-// Health check (cho cả 2 chế độ)
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, mode: USE_MOCK ? 'mock' : 'mysql', time: new Date().toISOString() });
-});
+// Health check (cho cả 2 chế độ - đã đặt ở trên, giữ fallback này để an toàn)
 
 // Fallback: trả về index.html cho các route không phải /api
 app.get(/^\/(?!api).*/, (req, res) => {

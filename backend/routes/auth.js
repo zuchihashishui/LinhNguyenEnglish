@@ -1,10 +1,12 @@
 // =====================================================
 // routes/auth.js
 // POST /api/auth/login
+// POST /api/auth/register
+// POST /api/auth/change-password  (đổi mật khẩu - yêu cầu mk hiện tại đúng)
 // =====================================================
 const express = require('express');
 const pool = require('../db');
-const { verifyPassword, hashPassword } = require('../auth');
+const { verifyPassword, hashPassword, requireTeacher } = require('../auth');
 
 const router = express.Router();
 
@@ -82,6 +84,43 @@ router.post('/login', async (req, res) => {
         is_admin: t.is_admin === 1,
       },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Đổi mật khẩu: bắt buộc nhập đúng mật khẩu hiện tại
+// Body: { current_password, new_password, new_password_confirm }
+router.post('/change-password', requireTeacher, async (req, res) => {
+  const { current_password, new_password, new_password_confirm } = req.body || {};
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Vui lòng nhập mật khẩu hiện tại và mật khẩu mới' });
+  }
+  if (new_password_confirm !== undefined && new_password !== new_password_confirm) {
+    return res.status(400).json({ error: 'Mật khẩu mới nhập lại không khớp' });
+  }
+  if (String(new_password).length < 4) {
+    return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 4 ký tự' });
+  }
+  if (String(current_password) === String(new_password)) {
+    return res.status(400).json({ error: 'Mật khẩu mới phải khác mật khẩu hiện tại' });
+  }
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, password_hash FROM teachers WHERE id = ?',
+      [req.teacher.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Không tìm thấy tài khoản' });
+    }
+    if (!verifyPassword(current_password, rows[0].password_hash)) {
+      return res.status(401).json({ error: 'Mật khẩu hiện tại không đúng' });
+    }
+    await pool.query(
+      'UPDATE teachers SET password_hash = ? WHERE id = ?',
+      [hashPassword(String(new_password)), req.teacher.id]
+    );
+    res.json({ ok: true, message: 'Đổi mật khẩu thành công' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

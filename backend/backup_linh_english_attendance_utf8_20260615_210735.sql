@@ -1,6 +1,6 @@
 -- =====================================================
 -- Backup UTF-8 chuan cho linh_english_attendance
--- Sinh luc: 2026-06-15T11:31:15.700Z
+-- Sinh luc: 2026-06-15T14:07:35.263Z
 -- Charset: utf8mb4 / Collation: utf8mb4_unicode_ci
 -- =====================================================
 
@@ -214,6 +214,25 @@ INSERT INTO `classes` VALUES
 /*!40000 ALTER TABLE `classes` ENABLE KEYS */;
 
 -- --------------------------------------------------------
+-- Cau truc bang `migrations`
+-- --------------------------------------------------------
+DROP TABLE IF EXISTS `migrations`;
+CREATE TABLE `migrations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `applied_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/*!40000 ALTER TABLE `migrations` DISABLE KEYS */;
+INSERT INTO `migrations` VALUES
+  (1,'001_init.sql','2026-06-15 18:41:31'),
+  (2,'002_add_exercise_score.sql','2026-06-15 18:41:31'),
+  (3,'003_add_session_date_index.sql','2026-06-15 18:41:31');
+/*!40000 ALTER TABLE `migrations` ENABLE KEYS */;
+
+-- --------------------------------------------------------
 -- Cau truc bang `sessions`
 -- --------------------------------------------------------
 DROP TABLE IF EXISTS `sessions`;
@@ -227,12 +246,14 @@ CREATE TABLE `sessions` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_sessions_class_date` (`class_id`,`session_date`),
   KEY `idx_sessions_class_id` (`class_id`),
+  KEY `idx_sessions_session_date` (`session_date`),
+  KEY `idx_sessions_class_date` (`class_id`,`session_date`),
   CONSTRAINT `fk_sessions_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=31 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 /*!40000 ALTER TABLE `sessions` DISABLE KEYS */;
 INSERT INTO `sessions` VALUES
-  (1,1,'2026-06-06','Unit 1: Family Life - Reading','Đọc hiểu bài Family Life.','2026-06-14 00:20:47'),
+  (1,1,'2026-06-06','Unit 1: Family Life - Reading','Ghi chu moi','2026-06-14 00:20:47'),
   (2,1,'2026-06-11','Unit 2: Friends - Listening','Luyện nghe chủ đề Friends.','2026-06-14 00:20:47'),
   (3,1,'2026-06-12','Unit 3: Teen Life - Vocabulary','Học từ vựng chương 3.','2026-06-14 00:20:47'),
   (4,1,'2026-06-13','Unit 3: Teen Life - Speaking','Ôn tập từ vựng chương 3.','2026-06-14 00:20:47'),
@@ -290,7 +311,7 @@ INSERT INTO `students` VALUES
   (5,1,'Hoàng Bảo Hân','HS005','F','2008-06-18','2026-06-14 00:20:47'),
   (6,1,'Vũ Khánh Huy','HS006','M','2008-09-04','2026-06-14 00:20:47'),
   (7,1,'Đặng Thùy Linh','HS007','F','2008-01-22','2026-06-14 00:20:47'),
-  (8,1,'Bùi Quang Minh','HS008','M','2008-05-15','2026-06-14 00:20:47'),
+  (8,1,'Bui Quang Minh','HS008','M','2008-05-15','2026-06-14 00:20:47'),
   (9,1,'Đỗ Thanh Ngân','HS009','F','2008-07-07','2026-06-14 00:20:47'),
   (10,1,'Ngô Tuấn Phong','HS010','M','2008-03-28','2026-06-14 00:20:47'),
   (11,2,'Đào Duy Thành','HS011','M','2007-05-02','2026-06-14 00:20:47'),
@@ -317,9 +338,9 @@ CREATE TABLE `teachers` (
 
 /*!40000 ALTER TABLE `teachers` DISABLE KEYS */;
 INSERT INTO `teachers` VALUES
-  (1,'admin','98ed4eb3fbd8a87681e6662b3dddccc7:808b1f7ba20ef0704eb354aa41fbc8eada82c5626f7f241e9f45843327ff193d40472480660651919506f671a4ef14e9276c09a0818e9553bc6d67cd630cb271','Quản trị viên',1,'2026-06-14 00:20:46'),
+  (1,'admin','6e950ffaf00112d25e649995da8f5d88:4cba6fd251a55ca33eef64ac95e0ab56250674a632a78c130d6ee75c00c9b23fdb133ef9199cd60ef5747f6db26a22fd8943c3b3234402208cf6c7e9d9641ce9','Quản trị viên',1,'2026-06-14 00:20:46'),
   (2,'linhnguyen','71e24edc8f84b5c6852e445d06f749a8:085889b9b1a1b3829a0f20444b7d62dfaf6ef76aa5ac7f92d72f166636097bf8fac77b52e1d4de1a2d17d36e4567782e80c100d4d6fb34c273ced4c0146902cd','Nguyễn Thị Linh',0,'2026-06-14 00:20:46'),
-  (3,'mai','811b9c8d4a1657a3fd09aeafef96963d:7015bfb6836477692c184126469d4cfce189cf887fbf8b29c88e9483b244a2d8caa90aae46511202cddd05b851bd7a06d18a7da28d1b916ce10e1f7f9f58fb96','Nguyễn Thị Mai',0,'2026-06-14 00:20:47'),
+  (3,'mai','5d7e7e43ef07fe25974b22419300f6b7:f61d281315320d8841c83891b9255000de5fc3c9d4767075c67990e0e78729e599647d5d08021bfe2abce98ebb49ce05b61c22c2a3cc24d10cb9e4ea9f78f346','Nguyễn Thị Mai',0,'2026-06-14 00:20:47'),
   (4,'tuan','4d2b54ea6a5d5a21948a6d408a8d5b29:3e6e540ad5e93aa2a8047b27c21913073012b4568e92164efad94d892d9b9a9202ef69b42270751eff36cd496b4a29022e708e283b954702eec1f0b9f5702e28','Trần Minh Tuấn',0,'2026-06-14 00:20:47'),
   (9,'testuser_656715','12d3197972cf52e897b40d24b08efd94:444c4eb21bd2b6b56a5fc4f7edbff18bf958ae52dc6c319fb18e6fe98cc17a9d1e3cb791dad3ecd4d4bdb686ab1dbfde3f10c9afa7ff2df25e9c569efa8f257f','Test User',0,'2026-06-14 01:17:36'),
   (10,'testuser_727366','094714d45a07056f988284b0d6603f4f:3840a13d7debc93fbc52ec4d4e8429a034e53893bca557094a0991f608d0de5b3fa70e63aec9577a66717915a24a1352a1353664b3fecd242155e443cc7c65bb','Test User',0,'2026-06-14 01:18:47'),
@@ -328,4 +349,4 @@ INSERT INTO `teachers` VALUES
 
 SET FOREIGN_KEY_CHECKS = 1;
 
--- Backup hoan tat: 2026-06-15T11:31:15.723Z
+-- Backup hoan tat: 2026-06-15T14:07:35.288Z

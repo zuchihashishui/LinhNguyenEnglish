@@ -92,6 +92,49 @@ router.get('/sessions/:id', async (req, res) => {
   }
 });
 
+// PUT /api/sessions/:id  - sửa title / note / session_date
+router.put('/sessions/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT class_id FROM sessions WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy buổi học' });
+    if (!await canAccessClass(req, rows[0].class_id)) {
+      return res.status(403).json({ error: 'Bạn không phụ trách lớp này' });
+    }
+    const { session_date, title, note } = req.body || {};
+    const fields = [];
+    const params = [];
+    if (session_date !== undefined) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(session_date)) {
+        return res.status(400).json({ error: 'Ngày học phải có định dạng yyyy-MM-dd' });
+      }
+      fields.push('session_date = ?');
+      params.push(session_date);
+    }
+    if (title !== undefined) {
+      fields.push('title = ?');
+      params.push(title ? String(title).trim() : null);
+    }
+    if (note !== undefined) {
+      fields.push('note = ?');
+      params.push(note ? String(note) : null);
+    }
+    if (fields.length === 0) return res.status(400).json({ error: 'Không có trường nào để cập nhật' });
+    params.push(req.params.id);
+    await pool.query('UPDATE sessions SET ' + fields.join(', ') + ' WHERE id = ?', params);
+
+    const [updated] = await pool.query(
+      'SELECT id, class_id, session_date, title, note, created_at FROM sessions WHERE id = ?',
+      [req.params.id]
+    );
+    res.json(updated[0]);
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Lớp này đã có buổi học trong ngày này rồi' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/sessions/:id
 router.delete('/sessions/:id', async (req, res) => {
   try {

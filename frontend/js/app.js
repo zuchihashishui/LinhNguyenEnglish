@@ -2,8 +2,6 @@
 // Frontend SPA đơn giản cho hệ thống điểm danh Linh English
 // =====================================================
 
-console.log('[Linh English] app.js v23 đang nạp...');
-
 const API = '/api';
 
 // ----- Lưu phiên đăng nhập vào localStorage -----
@@ -24,30 +22,45 @@ function setCurrentTeacher(t) {
 function updateAuthUI() {
   const header = $('#userInfo');
   if (!header) return;
+  header.innerHTML = '';
   if (currentTeacher) {
-    header.innerHTML = '';
+    // Tên giáo viên (ẩn trên mobile, hiện icon user)
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'user-name';
+    nameSpan.textContent = '👋 ' + currentTeacher.full_name + (currentTeacher.is_admin ? ' (Quản trị viên)' : '');
+    header.appendChild(nameSpan);
+
+    // Link Quản lý GV (chỉ admin)
     if (currentTeacher.is_admin) {
       const linkTeachers = document.createElement('a');
       linkTeachers.href = '#teachers';
+      linkTeachers.className = 'user-action admin-link';
       linkTeachers.textContent = '👥 Quản lý GV';
-      linkTeachers.style.cssText = 'color:#fff;text-decoration:none;margin-right:8px;font-size:14px';
+      linkTeachers.title = 'Quản lý giáo viên';
       header.appendChild(linkTeachers);
     }
-    const span = document.createElement('span');
-    span.style.color = '#374151';
-    span.style.marginRight = '8px';
-    span.textContent = '👋 ' + currentTeacher.full_name + (currentTeacher.is_admin ? ' (Quản trị viên)' : '');
-    header.appendChild(span);
+
+    // Nút Đổi mật khẩu
+    const btnChangePass = document.createElement('button');
+    btnChangePass.className = 'btn btn-sm btn-secondary user-action';
+    btnChangePass.innerHTML = '🔑 <span class="action-text">Đổi MK</span>';
+    btnChangePass.title = 'Đổi mật khẩu';
+    btnChangePass.addEventListener('click', function (e) {
+      e.preventDefault();
+      openChangePasswordDialog();
+    });
+    header.appendChild(btnChangePass);
+
+    // Nút Đăng xuất
     const btnOut = document.createElement('button');
-    btnOut.className = 'btn btn-sm btn-secondary';
-    btnOut.textContent = 'Đăng xuất';
+    btnOut.className = 'btn btn-sm user-action btn-logout';
+    btnOut.innerHTML = '🚪 <span class="action-text">Đăng xuất</span>';
+    btnOut.title = 'Đăng xuất';
     btnOut.addEventListener('click', function (e) {
       e.preventDefault();
       logout();
     });
     header.appendChild(btnOut);
-  } else {
-    header.innerHTML = '';
   }
 }
 
@@ -60,6 +73,7 @@ async function logout() {
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (currentTeacher) headers['X-Teacher-Id'] = currentTeacher.id;
+  const noAutoLogout = options.noAutoLogout === true;
   const res = await fetch(API + path, {
     ...options,
     headers,
@@ -67,8 +81,9 @@ async function api(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) {
-      // Hết phiên / chưa login → quay về màn login
+    if (res.status === 401 && currentTeacher && !noAutoLogout) {
+      // Hết phiên / token không hợp lệ → quay về màn login.
+      // Một số API (đổi MK, login) trả 401 cho lỗi nghiệp vụ thì không logout.
       setCurrentTeacher(null);
       await renderLogin();
     }
@@ -105,7 +120,9 @@ function toast(msg, type = '') {
   t.textContent = msg;
   t.className = 'toast show ' + type;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => { t.className = 'toast'; }, 2800);
+  // Lỗi hiển thị lâu hơn (6s) để user đọc kỹ, thành công 3s
+  const duration = type === 'error' ? 6000 : 3000;
+  toast._t = setTimeout(() => { t.className = 'toast'; }, duration);
 }
 
 function todayStr() {
@@ -117,6 +134,85 @@ function formatDate(s) {
   if (!s) return '';
   const [y, m, d] = s.split('-');
   return `${d}/${m}/${y}`;
+}
+
+// =====================================================
+// LocalStorage draft cho điểm danh - tránh mất dữ liệu khi reload
+// Mỗi session_id lưu 1 bản nháp các trường user đã sửa
+// =====================================================
+const DRAFT_PREFIX = 'linh_attendance_draft_v1_';
+const DRAFT_META   = 'linh_attendance_drafts_index_v1'; // { [sessionId]: { savedAt, count } }
+
+function draftKey(sessionId) { return DRAFT_PREFIX + sessionId; }
+
+function readDraftIndex() {
+  try { return JSON.parse(localStorage.getItem(DRAFT_META) || '{}') || {}; }
+  catch (_) { return {}; }
+}
+function writeDraftIndex(idx) {
+  try { localStorage.setItem(DRAFT_META, JSON.stringify(idx)); } catch (_) { /* quota? ignore */ }
+}
+function listDrafts() { return readDraftIndex(); }
+
+function loadDraft(sessionId) {
+  try {
+    const raw = localStorage.getItem(draftKey(sessionId));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+
+function saveDraft(sessionId, attendances) {
+  try {
+    // Chỉ lưu những row có student_id thật (bỏ row LEFT JOIN null)
+    const items = (attendances || [])
+      .filter(a => a.student_id != null)
+      .map(a => ({
+        student_id: a.student_id,
+        is_present: a.is_present,
+        lesson_score: a.lesson_score,
+        exercise_score: a.exercise_score,
+        lesson_grade: a.lesson_grade,
+        teacher_note: a.teacher_note,
+      }));
+    if (items.length === 0) { clearDraft(sessionId); return; }
+    const payload = { sessionId: Number(sessionId), savedAt: Date.now(), items };
+    localStorage.setItem(draftKey(sessionId), JSON.stringify(payload));
+    const idx = readDraftIndex();
+    idx[sessionId] = { savedAt: payload.savedAt, count: items.length };
+    writeDraftIndex(idx);
+  } catch (_) { /* quota? ignore */ }
+}
+
+function clearDraft(sessionId) {
+  try {
+    localStorage.removeItem(draftKey(sessionId));
+    const idx = readDraftIndex();
+    if (idx[sessionId]) { delete idx[sessionId]; writeDraftIndex(idx); }
+  } catch (_) { /* ignore */ }
+}
+
+function hasDraft(sessionId) {
+  const idx = readDraftIndex();
+  return !!idx[sessionId];
+}
+
+function clearAllDrafts() {
+  try {
+    const idx = readDraftIndex();
+    Object.keys(idx).forEach(sid => localStorage.removeItem(draftKey(sid)));
+    localStorage.removeItem(DRAFT_META);
+  } catch (_) { /* ignore */ }
+}
+
+// Debounce helper cho auto-save
+function debounce(fn, wait) {
+  let t = null;
+  return function () {
+    const args = arguments, ctx = this;
+    clearTimeout(t);
+    t = setTimeout(function () { fn.apply(ctx, args); }, wait);
+  };
 }
 
 // ----- Hash Router -----
@@ -140,11 +236,30 @@ function parseHash() {
 }
 
 function navigate(hash) {
-  if (location.hash === hash) render();
-  else location.hash = hash;
+  if (location.hash === hash) {
+    render();
+    return;
+  }
+  // Cảnh báo nếu đang ở trang điểm danh và có draft chưa lưu
+  if (draftDirty && currentSession && hasDraft(currentSession.id)) {
+    const ok = confirm('Bạn đang có bản nháp điểm danh chưa lưu.\n\n' +
+      'Bấm OK để rời trang (bản nháp đã được lưu tạm trong trình duyệt, bạn có thể khôi phục sau).\n' +
+      'Bấm Hủy để ở lại trang.');
+    if (!ok) return;
+  }
+  location.hash = hash;
 }
 
 window.addEventListener('hashchange', render);
+
+// Cảnh báo trước khi đóng tab/reload khi có draft chưa lưu
+window.addEventListener('beforeunload', function (e) {
+  if (draftDirty && currentSession && hasDraft(currentSession.id)) {
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  }
+});
 
 function setCrumbs(items) {
   const c = $('#crumbs');
@@ -185,21 +300,20 @@ async function renderLogin() {
   main.innerHTML = '';
   setCrumbs([{ label: 'Đăng nhập' }]);
 
-  const wrap = el('div', { style: {
-    maxWidth: '420px', margin: '60px auto', background: '#fff',
-    padding: '32px', borderRadius: '12px',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-  } });
+  const wrap = el('div', { class: 'auth-card' });
+  wrap.style.maxWidth = '420px';
+  wrap.style.margin = '40px auto';
+  wrap.style.background = 'var(--bg-elevated)';
+  wrap.style.padding = '32px';
+  wrap.style.borderRadius = '12px';
+  wrap.style.boxShadow = 'var(--shadow-md)';
 
-  wrap.appendChild(el('h1', { style: { marginTop: 0, color: '#4f46e5' } }, '🔐 Đăng nhập'));
-  wrap.appendChild(el('p', { style: { color: '#6b7280', marginBottom: '24px' } },
+  wrap.appendChild(el('h1', { style: { marginTop: 0, color: '#4f46e5', fontSize: '22px' } }, '🔐 Đăng nhập'));
+  wrap.appendChild(el('p', { style: { color: '#6b7280', marginBottom: '20px', fontSize: '14px' } },
     'Hệ thống điểm danh Linh English'));
 
   // Banner tài khoản mẫu
-  const hint = el('div', { style: {
-    background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px',
-    padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#3730a3',
-  } });
+  const hint = el('div', { class: 'auth-hint' });
   hint.innerHTML = 'Tài khoản mẫu (mật khẩu: <b>123456</b>):<br>' +
     '<b>admin</b> — quản trị viên, thấy tất cả lớp<br>' +
     '<b>linh</b>, <b>mai</b>, <b>tuan</b> — giáo viên phụ trách từng lớp';
@@ -237,27 +351,20 @@ async function renderLogin() {
   // Gắn handler bằng addEventListener trực tiếp
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
-    console.log('[login] submit fired, going to call API');
     const username = (document.getElementById('loginUser') || {}).value || '';
     const password = (document.getElementById('loginPass') || {}).value || '';
     errBox.textContent = '';
     try {
-      const data = await api('/auth/login', { method: 'POST', body: { username: username.trim(), password } });
-      console.log('[login] API OK:', data);
+      const data = await api('/auth/login', { method: 'POST', noAutoLogout: true, body: { username: username.trim(), password } });
       setCurrentTeacher(data.teacher);
       toast('Xin chào ' + data.teacher.full_name, 'success');
       location.hash = '';
       render();
     } catch (err) {
-      console.log('[login] API ERR:', err.message);
       errBox.textContent = err.message;
     }
   });
-  // Lưu ý: gắn thêm vào button click để bắt mọi trường hợp
-  btn.addEventListener('click', function (e) {
-    console.log('[login] button clicked');
-    // Không preventDefault - để form submit tự nhiên
-  });
+  // Submit thông qua form là đủ - không cần handler button riêng
 
   // Link sang trang đăng ký
   wrap.appendChild(el('div', { style: { textAlign: 'center', marginTop: '16px', fontSize: '14px', color: '#6b7280' } },
@@ -276,21 +383,14 @@ async function renderRegister() {
   main.innerHTML = '';
   setCrumbs([{ label: 'Đăng ký giáo viên' }]);
 
-  const wrap = el('div', { style: {
-    maxWidth: '420px', margin: '60px auto', background: '#fff',
-    padding: '32px', borderRadius: '12px',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-  } });
+  const wrap = el('div', { class: 'auth-card' });
 
-  wrap.appendChild(el('h1', { style: { marginTop: 0, color: '#4f46e5' } }, '📝 Đăng ký giáo viên'));
-  wrap.appendChild(el('p', { style: { color: '#6b7280', marginBottom: '24px' } },
+  wrap.appendChild(el('h1', { style: { marginTop: 0, color: '#4f46e5', fontSize: '22px' } }, '📝 Đăng ký giáo viên'));
+  wrap.appendChild(el('p', { style: { color: '#6b7280', marginBottom: '20px', fontSize: '14px' } },
     'Tạo tài khoản để bắt đầu quản lý lớp học và điểm danh.'));
 
   // Banner gợi ý
-  const note = el('div', { style: {
-    background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px',
-    padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#92400e',
-  } });
+  const note = el('div', { class: 'auth-warn' });
   note.innerHTML = 'Sau khi đăng ký, bạn sẽ được tự động đăng nhập. ' +
     'Nếu muốn phụ trách lớp có sẵn, hãy liên hệ quản trị viên để được gán.';
   wrap.appendChild(note);
@@ -343,6 +443,7 @@ async function renderRegister() {
     try {
       const data = await api('/auth/register', {
         method: 'POST',
+        noAutoLogout: true,
         body: { full_name: full_name.trim(), username: username.trim(), password, password_confirm },
       });
       setCurrentTeacher(data.teacher);
@@ -451,7 +552,7 @@ async function renderHome() {
     }
 
     const tableCard = el('div', { class: 'card' });
-    const table = el('table');
+    const table = el('table', { class: 'classes-table' });
     table.appendChild(el('thead', {},
       el('tr', {},
         el('th', {}, 'STT'),
@@ -465,12 +566,9 @@ async function renderHome() {
     classes.forEach((c, i) => {
       const openClass = () => navigate('#class/' + c.id);
       const goAttendance = async () => {
-        console.log('[goAttendance] clicked, classId=', c.id);
         try {
           const today = todayStr();
-          console.log('[goAttendance] today=', today);
           const list = await api('/classes/' + c.id + '/sessions');
-          console.log('[goAttendance] got sessions:', list.length);
           let target = list.find(s => s.session_date === today);
           if (!target) {
             if (!confirm('Chưa có buổi học nào cho ngày hôm nay (' + today + ').\n\n' +
@@ -487,10 +585,8 @@ async function renderHome() {
             target = created;
             toast('Đã tạo buổi học hôm nay', 'success');
           }
-          console.log('[goAttendance] navigate to', '#session-edit/' + target.id);
           navigate('#session-edit/' + target.id);
         } catch (err) {
-          console.log('[goAttendance] ERR:', err.message);
           toast(err.message, 'error');
         }
       };
@@ -574,7 +670,9 @@ async function renderHome() {
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    tableCard.appendChild(table);
+    const wrap = el('div', { class: 'table-wrapper' });
+    wrap.appendChild(table);
+    tableCard.appendChild(wrap);
     main.appendChild(tableCard);
   } catch (err) {
     $('#app').innerHTML = `<div class="card empty">Lỗi tải dữ liệu: ${err.message}</div>`;
@@ -607,14 +705,14 @@ async function renderClassDetail(parts) {
 
     const main = $('#app');
     main.innerHTML = '';
-    const headerRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } },
+    const headerRow = el('div', { class: 'page-header', style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } },
       el('h1', { style: { margin: 0 } }, 'Lớp: ' + cls.name),
-      el('div', { style: { marginLeft: 'auto', display: 'flex', gap: '8px' } },
+      el('div', { class: 'header-actions', style: { marginLeft: 'auto', display: 'flex', gap: '8px' } },
         el('button', { class: 'btn btn-secondary', onClick: () => navigate('#') }, '← DS lớp'),
         el('button', { class: 'btn', onClick: () => {
           const today = new Date();
           navigate('#class-stats/' + classId + '/' + today.getFullYear() + '/' + (today.getMonth() + 1));
-        }, title: 'Xem thống kê tháng này' }, '📊 Thống kê tháng'),
+        }, title: 'Xem thống kê tháng này' }, '📊 Thống kê'),
       )
     );
     main.appendChild(headerRow);
@@ -691,7 +789,7 @@ function renderStudentsTab(main, classId, students) {
 
   const tableCard = el('div', { class: 'card' });
   tableCard.appendChild(el('h3', {}, 'Danh sách học sinh (' + students.length + ')'));
-  const table = el('table');
+  const table = el('table', { class: 'students-table' });
   table.appendChild(el('thead', {},
     el('tr', {},
       el('th', {}, 'STT'),
@@ -711,16 +809,22 @@ function renderStudentsTab(main, classId, students) {
       el('td', {}, s.gender === 'M' ? 'Nam' : s.gender === 'F' ? 'Nữ' : s.gender === 'O' ? 'Khác' : '—'),
       el('td', {}, s.date_of_birth ? formatDate(s.date_of_birth) : '—'),
       el('td', {},
-        el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
-          if (!confirm(`Xoá học sinh "${s.full_name}"?`)) return;
-          try { await api('/students/' + s.id, { method: 'DELETE' }); toast('Đã xoá', 'success'); renderClassDetail(['class', classId]); }
-          catch (err) { toast(err.message, 'error'); }
-        }}, 'Xoá')
+        el('div', { class: 'actions-cell' },
+          el('button', { class: 'btn btn-sm',
+            onClick: () => openEditStudentDialog(s, () => renderClassDetail(['class', classId])) }, '✏️ Sửa'),
+          el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
+            if (!confirm(`Xoá học sinh "${s.full_name}"?\n\nLưu ý: toàn bộ điểm danh của HS này cũng bị xoá theo.`)) return;
+            try { await api('/students/' + s.id, { method: 'DELETE' }); toast('Đã xoá', 'success'); renderClassDetail(['class', classId]); }
+            catch (err) { toast(err.message, 'error'); }
+          }}, 'Xoá')
+        )
       )
     ));
   });
   table.appendChild(tbody);
-  tableCard.appendChild(table);
+  const wrap = el('div', { class: 'table-wrapper' });
+  wrap.appendChild(table);
+  tableCard.appendChild(wrap);
   main.appendChild(tableCard);
 }
 
@@ -768,7 +872,7 @@ function renderSessionsTab(main, classId, sessions) {
 
   const tableCard = el('div', { class: 'card' });
   tableCard.appendChild(el('h3', {}, 'Danh sách buổi học (' + sessions.length + ')'));
-  const table = el('table');
+  const table = el('table', { class: 'sessions-table' });
   table.appendChild(el('thead', {},
     el('tr', {},
       el('th', {}, 'Ngày'),
@@ -787,8 +891,9 @@ function renderSessionsTab(main, classId, sessions) {
         el('div', { class: 'actions-cell' },
           el('button', { class: 'btn btn-sm btn-success', onClick: () => navigate('#session-edit/' + s.id) }, '✏️ Điểm danh'),
           el('button', { class: 'btn btn-sm btn-secondary', onClick: () => navigate('#session-view/' + s.id) }, '👁️ Xem'),
+          el('button', { class: 'btn btn-sm', onClick: () => openEditSessionDialog(s, () => renderClassDetail(['class', classId])) }, '✏️ Sửa'),
           el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
-            if (!confirm('Xoá buổi học này?')) return;
+            if (!confirm('Xoá buổi học ngày ' + formatDate(s.session_date) + '?\n\nToàn bộ điểm danh trong buổi này cũng bị xoá theo.')) return;
             try { await api('/sessions/' + s.id, { method: 'DELETE' }); toast('Đã xoá buổi học', 'success'); renderClassDetail(['class', classId]); }
             catch (err) { toast(err.message, 'error'); }
           }}, 'Xoá'),
@@ -797,7 +902,9 @@ function renderSessionsTab(main, classId, sessions) {
     ));
   });
   table.appendChild(tbody);
-  tableCard.appendChild(table);
+  const wrap = el('div', { class: 'table-wrapper' });
+  wrap.appendChild(table);
+  tableCard.appendChild(wrap);
   main.appendChild(tableCard);
 }
 
@@ -807,6 +914,27 @@ function renderSessionsTab(main, classId, sessions) {
 let currentSession = null;
 let currentAttendances = [];
 let currentClassSessions = []; // danh sách tất cả sessions của lớp hiện tại (cho điều hướng Trước/Sau)
+let draftSaveTimer = null;
+let draftDirty = false; // đánh dấu đã có thay đổi kể từ lần load/lưu gần nhất
+
+function scheduleDraftSave() {
+  if (!currentSession) return;
+  draftDirty = true;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(function () {
+    if (currentSession) {
+      saveDraft(currentSession.id, currentAttendances);
+      const ind = $('#draftIndicator');
+      if (ind) {
+        ind.textContent = '📝 Đã lưu nháp lúc ' + new Date().toLocaleTimeString();
+        ind.style.color = '#059669';
+        ind.style.display = '';
+      }
+      const btn = $('#btnDiscardDraft');
+      if (btn) btn.style.display = '';
+    }
+  }, 300);
+}
 
 async function renderSessionEdit(parts) {
   const sessionId = parts[1];
@@ -824,6 +952,41 @@ async function renderSessionEdit(parts) {
     } catch (e) {
       currentClassSessions = [currentSession];
     }
+
+    // Kiểm tra có bản nháp local chưa
+    const draft = loadDraft(currentSession.id);
+    if (draft && Array.isArray(draft.items) && draft.items.length > 0) {
+      const minutesAgo = Math.max(0, Math.round((Date.now() - (draft.savedAt || 0)) / 60000));
+      const timeLabel = minutesAgo < 1 ? 'vừa xong' : (minutesAgo < 60 ? minutesAgo + ' phút trước' : Math.round(minutesAgo / 60) + ' giờ trước');
+      const restore = confirm(
+        '📝 Có bản nháp điểm danh chưa lưu cho buổi này (' + timeLabel + ').\n\n' +
+        'Bấm OK để KHÔI PHỤC lại các thay đổi chưa lưu.\n' +
+        'Bấm Hủy để bỏ nháp và dùng dữ liệu hiện có trên server.'
+      );
+      if (restore) {
+        // Áp dụng draft lên currentAttendances (chỉ rows có student_id khớp)
+        const map = {};
+        draft.items.forEach(d => { map[d.student_id] = d; });
+        currentAttendances.forEach(a => {
+          if (a.student_id == null) return;
+          const d = map[a.student_id];
+          if (!d) return;
+          a.is_present     = d.is_present;
+          a.lesson_score   = d.lesson_score;
+          a.exercise_score = d.exercise_score;
+          a.lesson_grade   = d.lesson_grade;
+          a.teacher_note   = d.teacher_note;
+        });
+        draftDirty = false; // đã restore, chưa có thay đổi mới
+        toast('Đã khôi phục bản nháp', 'success');
+      } else {
+        clearDraft(currentSession.id);
+        draftDirty = false;
+      }
+    } else {
+      draftDirty = false;
+    }
+
     paintSessionEditor(true);
   } catch (err) {
     $('#app').innerHTML = `<div class="card empty">Lỗi: ${err.message}</div>`;
@@ -925,6 +1088,7 @@ function bulkSet(mode) {
   });
   paintSessionEditor(true);
   updateSummary();
+  scheduleDraftSave();
 }
 
 function updateSummary() {
@@ -958,9 +1122,8 @@ function paintSessionEditor(editable) {
 
   // === Thanh điều hướng ngày (Trước / Sau / Date picker / Hôm nay) ===
   const nav = el('div', {
-    class: 'card',
+    class: 'card date-nav',
     id: 'dateNavBar',
-    style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', background: '#f9fafb' }
   });
 
   // Nút "Trước"
@@ -982,16 +1145,15 @@ function paintSessionEditor(editable) {
 
   // Date picker
   const dateWrap = document.createElement('div');
-  dateWrap.style.cssText = 'display:flex;align-items:center;gap:6px';
+  dateWrap.className = 'date-input-wrap';
   const dateLabel = document.createElement('label');
-  dateLabel.textContent = '📅 Chọn ngày:';
-  dateLabel.style.cssText = 'font-size:14px;color:#374151';
+  dateLabel.textContent = '📅';
+  dateLabel.className = 'date-label';
   dateWrap.appendChild(dateLabel);
   const dateInput = document.createElement('input');
   dateInput.type = 'date';
   dateInput.id = 'sessionDatePicker';
   dateInput.value = s.session_date;
-  dateInput.style.cssText = 'padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px';
   dateInput.addEventListener('change', function () { goToDate(dateInput.value); });
   dateWrap.appendChild(dateInput);
   nav.appendChild(dateWrap);
@@ -1114,7 +1276,7 @@ function paintSessionEditor(editable) {
       chk.type = 'checkbox';
       chk.checked = a.is_present == 1;
       chk.setAttribute('data-field', 'is_present');
-      chk.addEventListener('change', function () { a.is_present = chk.checked ? 1 : 0; });
+      chk.addEventListener('change', function () { a.is_present = chk.checked ? 1 : 0; scheduleDraftSave(); });
       tdPresent.appendChild(chk);
       tr.appendChild(tdPresent);
 
@@ -1141,8 +1303,7 @@ function paintSessionEditor(editable) {
         // Nếu user chưa tự chọn xếp loại (giá trị rỗng hoặc trùng auto), cập nhật theo
         const g = autoGrade(scoreInp.value);
         if (g && (!a.lesson_grade || ['Tốt','Khá','Trung bình','Yếu'].indexOf(a.lesson_grade) >= 0)) {
-          a.lesson_grade = g;
-          // Cập nhật lại select nếu tồn tại
+          a.lesson_grade = g;          // Cập nhật lại select nếu tồn tại
           const tr2 = scoreInp.closest('tr');
           if (tr2) {
             const sel2 = tr2.querySelector('select');
@@ -1153,6 +1314,7 @@ function paintSessionEditor(editable) {
             }
           }
         }
+        scheduleDraftSave();
       });
       tdScore.appendChild(scoreInp);
       tr.appendChild(tdScore);
@@ -1167,7 +1329,7 @@ function paintSessionEditor(editable) {
       exInp.value = a.exercise_score != null ? String(a.exercise_score) : '';
       exInp.style.cssText = 'width:70px;padding:4px;border:1px solid #d1d5db;border-radius:4px';
       exInp.placeholder = 'BT';
-      exInp.addEventListener('input', function () { a.exercise_score = exInp.value; });
+      exInp.addEventListener('input', function () { a.exercise_score = exInp.value; scheduleDraftSave(); });
       tdExScore.appendChild(exInp);
       tr.appendChild(tdExScore);
 
@@ -1182,7 +1344,7 @@ function paintSessionEditor(editable) {
         if ((a.lesson_grade || '') === (val || '')) opt.selected = true;
         sel.appendChild(opt);
       });
-      sel.addEventListener('change', function () { a.lesson_grade = sel.value || null; });
+      sel.addEventListener('change', function () { a.lesson_grade = sel.value || null; scheduleDraftSave(); });
       tdGrade.appendChild(sel);
       tr.appendChild(tdGrade);
 
@@ -1193,7 +1355,7 @@ function paintSessionEditor(editable) {
       ta.placeholder = 'Nhận xét...';
       ta.style.cssText = 'width:100%;padding:4px;border:1px solid #d1d5db;border-radius:4px;resize:vertical';
       ta.value = a.teacher_note || '';
-      ta.addEventListener('input', function () { a.teacher_note = ta.value; });
+      ta.addEventListener('input', function () { a.teacher_note = ta.value; scheduleDraftSave(); });
       tdNote.appendChild(ta);
       tr.appendChild(tdNote);
     } else {
@@ -1226,7 +1388,9 @@ function paintSessionEditor(editable) {
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  tableCard.appendChild(table);
+  const wrapAtt = el('div', { class: 'table-wrapper' });
+  wrapAtt.appendChild(table);
+  tableCard.appendChild(wrapAtt);
 
   if (editable) {
     // Toolbar phụ: tick nhanh - DOM thuần
@@ -1254,10 +1418,12 @@ function paintSessionEditor(editable) {
     quickBar.appendChild(btnToggle);
     tableCard.appendChild(quickBar);
 
-    // Toolbar chính: Lưu + Quay lại
+    // Toolbar chính: Lưu + Quay lại + Xóa nháp + Indicator
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
     toolbar.style.marginTop = '12px';
+    toolbar.style.flexWrap = 'wrap';
+    toolbar.style.gap = '8px';
 
     const btnSave = document.createElement('button');
     btnSave.className = 'btn';
@@ -1287,6 +1453,13 @@ function paintSessionEditor(editable) {
         }));
         await api('/sessions/' + s.id + '/attendances', { method: 'POST', body: { items } });
         toast('Đã lưu điểm danh (' + items.length + ' học sinh)', 'success');
+        // Lưu thành công → xóa bản nháp
+        clearDraft(s.id);
+        draftDirty = false;
+        const ind = $('#draftIndicator');
+        if (ind) { ind.textContent = ''; ind.style.display = 'none'; }
+        const btnDiscard = $('#btnDiscardDraft');
+        if (btnDiscard) btnDiscard.style.display = 'none';
         btnSave.textContent = '✅ Đã lưu';
         setTimeout(function () { btnSave.textContent = '💾 Lưu điểm danh'; btnSave.disabled = false; }, 1500);
       } catch (err) {
@@ -1296,6 +1469,37 @@ function paintSessionEditor(editable) {
       }
     });
     toolbar.appendChild(btnSave);
+
+    // Nút "Xóa nháp" (chỉ hiện khi có draft chưa lưu)
+    const btnDiscard = document.createElement('button');
+    btnDiscard.id = 'btnDiscardDraft';
+    btnDiscard.className = 'btn btn-sm btn-secondary';
+    btnDiscard.textContent = '🗑 Bỏ nháp';
+    btnDiscard.title = 'Xóa bản nháp tạm trong trình duyệt (dữ liệu đã lưu trên server không đổi)';
+    if (!hasDraft(s.id)) btnDiscard.style.display = 'none';
+    btnDiscard.addEventListener('click', function () {
+      if (!confirm('Bỏ bản nháp đang soạn?\n\nDữ liệu đã lưu trên server sẽ không bị ảnh hưởng. Bạn sẽ thấy lại dữ liệu gốc từ server.')) return;
+      clearDraft(s.id);
+      draftDirty = false;
+      // Tải lại dữ liệu gốc từ server
+      renderSessionEdit(['session-edit', s.id]);
+    });
+    toolbar.appendChild(btnDiscard);
+
+    // Indicator trạng thái draft
+    const ind = document.createElement('span');
+    ind.id = 'draftIndicator';
+    ind.style.cssText = 'font-size:13px;color:#6b7280;margin-left:8px';
+    if (hasDraft(s.id)) {
+      const draftInfo = loadDraft(s.id);
+      if (draftInfo && draftInfo.savedAt) {
+        ind.textContent = '📝 Có nháp lưu lúc ' + new Date(draftInfo.savedAt).toLocaleTimeString();
+        ind.style.color = '#b45309';
+      }
+    } else {
+      ind.textContent = '';
+    }
+    toolbar.appendChild(ind);
 
     const btnBack = document.createElement('button');
     btnBack.className = 'btn btn-secondary';
@@ -1358,21 +1562,20 @@ async function renderClassStats(parts) {
     const stats = await api(`/classes/${classId}/stats?year=${year}&month=${month}`);
 
     main.innerHTML = '';
-    main.appendChild(el('h1', {}, '📊 Thống kê điểm danh'));
-    main.appendChild(el('h2', { style: { color: '#6b7280', fontWeight: 500 } },
+    main.appendChild(el('h1', { class: 'page-title' }, '📊 Thống kê điểm danh'));
+    main.appendChild(el('h2', { class: 'page-subtitle', style: { color: '#6b7280', fontWeight: 500, fontSize: '15px' } },
       stats.class.name + ' • Tháng ' + stats.period.month + '/' + stats.period.year +
       ' (từ ' + stats.period.from + ' đến ' + stats.period.to + ')'
     ));
 
     // Bộ chọn tháng/năm
-    const picker = el('div', { class: 'card', style: { padding: '16px' } });
-    picker.appendChild(el('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
-      el('label', {}, 'Tháng:'),
+    const picker = el('div', { class: 'card' });
+    picker.appendChild(el('div', { class: 'toolbar' },
+      el('label', { class: 'label' }, 'Tháng:'),
       (() => {
         const sel = el('select', { id: 'statMonth',
           onChange: () => {
             const y = $('#statYear') ? $('#statYear').value : year;
-            console.log('[stats] month change -> #class-stats/' + classId + '/' + y + '/' + sel.value);
             navigate('#class-stats/' + classId + '/' + y + '/' + sel.value);
           }
         });
@@ -1382,12 +1585,11 @@ async function renderClassStats(parts) {
         }
         return sel;
       })(),
-      el('label', {}, 'Năm:'),
+      el('label', { class: 'label' }, 'Năm:'),
       (() => {
         const sel = el('select', { id: 'statYear',
           onChange: () => {
             const m = $('#statMonth') ? $('#statMonth').value : month;
-            console.log('[stats] year change -> #class-stats/' + classId + '/' + sel.value + '/' + m);
             navigate('#class-stats/' + classId + '/' + sel.value + '/' + m);
           }
         });
@@ -1420,7 +1622,7 @@ async function renderClassStats(parts) {
     if (stats.students.length === 0) {
       card.appendChild(el('div', { class: 'empty' }, 'Lớp chưa có học sinh.'));
     } else {
-      const table = el('table');
+      const table = el('table', { class: 'stats-table' });
       table.appendChild(el('thead', {},
         el('tr', {},
           el('th', {}, '#'),
@@ -1476,7 +1678,9 @@ async function renderClassStats(parts) {
         ));
       });
       table.appendChild(tbody);
-      card.appendChild(table);
+      const wrapS = el('div', { class: 'table-wrapper' });
+      wrapS.appendChild(table);
+      card.appendChild(wrapS);
     }
     main.appendChild(card);
   } catch (err) {
@@ -1496,81 +1700,103 @@ async function renderStudentStats(parts) {
   main.innerHTML = '<p class="loading">Đang tải thống kê học sinh...</p>';
 
   try {
-    // Lấy thông tin HS + thống kê tổng quan
-    const [studentList, stats, classes] = await Promise.all([
-      api('/students/' + studentId).catch(() => null),
-      api('/students/' + studentId + '/stats'),
-    ]);
+    // Lay 1 lan toan bo (thong tin + stats thang + details) qua endpoint /history
+    const studentList = await api('/students/' + studentId).catch(() => null);
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const history = await api('/students/' + studentId + '/history?year=' + year + '&month=' + month);
 
     main.innerHTML = '';
     if (!studentList) {
-      main.appendChild(el('div', { class: 'card empty' }, 'Không tìm thấy học sinh #' + studentId));
+      main.appendChild(el('div', { class: 'card empty' },
+        el('div', { class: 'icon' }, '😕'),
+        el('div', { class: 'title' }, 'Không tìm thấy học sinh #' + studentId)
+      ));
       return;
     }
 
+    // Lấy thông tin lớp (nếu chưa có) để biết grade_level
+    let studentClass = currentClass;
+    if (!studentClass || Number(studentClass.id) !== Number(studentList.class_id)) {
+      try {
+        const allClasses = await api('/classes');
+        studentClass = allClasses.find(c => Number(c.id) === Number(studentList.class_id)) || null;
+        if (studentClass) currentClass = studentClass;
+      } catch (_) { /* ignore */ }
+    }
+    const gradeLevel = (studentClass && studentClass.grade_level) || 3;
+
     setCrumbs([
-      { label: 'Lớp: ' + (currentClass ? currentClass.name : ''), href: '#class/' + studentList.class_id },
+      { label: 'Lớp: ' + (studentClass ? studentClass.name : '#' + studentList.class_id), href: '#class/' + studentList.class_id },
       { label: 'HS: ' + studentList.full_name },
     ]);
 
     main.appendChild(el('h1', {}, '👤 ' + studentList.full_name));
-    main.appendChild(el('p', { style: { color: '#6b7280' } },
+    main.appendChild(el('p', { class: 'muted' },
       'Mã: ' + studentList.student_code +
       ' • Lớp: ' + (currentClass ? currentClass.name : '#' + studentList.class_id) +
       ' • Giới tính: ' + (studentList.gender === 'M' ? 'Nam' : studentList.gender === 'F' ? 'Nữ' : studentList.gender === 'O' ? 'Khác' : '—') +
       (studentList.date_of_birth ? ' • Sinh: ' + formatDate(studentList.date_of_birth) : '')
     ));
 
-    // Thẻ tổng quan
-    const total = Number(stats.total_sessions || 0);
-    const present = Number(stats.present_count || 0);
-    const absent = Number(stats.absent_count || 0);
-    const unmarked = total - present - absent; // những buổi chưa tick
+    // Thẻ tổng quan tháng (dùng month_stats từ /history)
+    const ms = history.month_stats || {};
+    const total = Number(ms.total_sessions || 0);
+    const present = Number(ms.present_count || 0);
+    const absent = Number(ms.absent_count || 0);
+    const unmarked = total - present - absent;
     const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-    const avgScore = stats.avg_lesson_score;
-    const avgExScore = stats.avg_exercise_score;
+    const avgScore = ms.avg_lesson_score;
+    const avgExScore = ms.avg_exercise_score;
 
-    const overview = el('div', { class: 'card', style: { background: '#eef2ff', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px' } },
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Tổng buổi'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#4f46e5' } }, String(total))),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Có mặt'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#059669' } }, String(present))),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Vắng'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#dc2626' } }, String(absent))),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Chưa tick'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: unmarked > 0 ? '#d97706' : '#6b7280' } }, String(unmarked))),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Tỉ lệ chuyên cần'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, rate + '%')),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'ĐTB bài cũ'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, avgScore != null ? avgScore + ' đ' : '—')),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'ĐTB bài tập'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, avgExScore != null ? avgExScore + ' đ' : '—')),
+    const overview = el('div', { class: 'stat-grid' },
+      el('div', { class: 'stat-card primary' },
+        el('div', { class: 'stat-label' }, 'Tổng buổi'),
+        el('div', { class: 'stat-value' }, String(total))
+      ),
+      el('div', { class: 'stat-card success' },
+        el('div', { class: 'stat-label' }, 'Có mặt'),
+        el('div', { class: 'stat-value' }, String(present))
+      ),
+      el('div', { class: 'stat-card danger' },
+        el('div', { class: 'stat-label' }, 'Vắng'),
+        el('div', { class: 'stat-value' }, String(absent))
+      ),
+      el('div', { class: 'stat-card' + (unmarked > 0 ? ' warning' : '') },
+        el('div', { class: 'stat-label' }, 'Chưa tick'),
+        el('div', { class: 'stat-value' }, String(unmarked))
+      ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'Tỉ lệ chuyên cần'),
+        el('div', { class: 'stat-value' }, rate + '%')
+      ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'ĐTB bài cũ'),
+        el('div', { class: 'stat-value' }, avgScore != null ? avgScore + ' đ' : '—')
+      ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'ĐTB bài tập'),
+        el('div', { class: 'stat-value' }, avgExScore != null ? avgExScore + ' đ' : '—')
+      ),
     );
     main.appendChild(overview);
 
-    // Lấy lịch sử điểm danh
-    const sessions = await api('/classes/' + studentList.class_id + '/sessions');
-    const attendances = await api('/sessions/' + (sessions[0] ? sessions[0].id : 0) + '/attendances').catch(() => null);
-
-    // Lấy từng attendance cho từng session
-    const details = [];
-    for (const s of sessions) {
-      try {
-        const a = await api('/sessions/' + s.id);
-        const row = (a.attendances || []).find(x => x.student_id == studentId);
-        details.push({
-          session_id: s.id,
-          session_date: s.session_date,
-          title: s.title,
-          is_present: row ? row.is_present : null,
-          lesson_score: row ? row.lesson_score : null,
-          exercise_score: row ? row.exercise_score : null,
-          lesson_grade: row ? row.lesson_grade : null,
-          teacher_note: row ? row.teacher_note : null,
-        });
-      } catch (e) { /* skip */ }
-    }
-    details.sort((a, b) => b.session_date.localeCompare(a.session_date));
+    // Lịch sử điểm danh (1 query, không N+1)
+    const details = (history.details || []).slice().sort(function (a, b) {
+      return (b.session_date || '').localeCompare(a.session_date || '');
+    });
 
     const card = el('div', { class: 'card' });
-    card.appendChild(el('h3', {}, 'Lịch sử điểm danh (' + details.length + ' buổi)'));
+    card.appendChild(el('h3', {}, 'Lịch sử điểm danh (' + details.length + ' buổi) trong tháng ' + month + '/' + year));
 
     if (details.length === 0) {
-      card.appendChild(el('div', { class: 'empty' }, 'Lớp chưa có buổi học nào.'));
+      card.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'icon' }, '📅'),
+        el('div', { class: 'title' }, 'Lớp chưa có buổi học nào trong tháng này')
+      ));
     } else {
+      const tableWrap = el('div', { class: 'table-wrapper' });
       const table = el('table');
       table.appendChild(el('thead', {},
         el('tr', {},
@@ -1581,13 +1807,13 @@ async function renderStudentStats(parts) {
           el('th', { style: { textAlign: 'center' } }, 'Điểm bài tập'),
           el('th', { style: { textAlign: 'center' } }, 'Xếp loại'),
           el('th', {}, 'Nhận xét'),
-          el('th', { style: { textAlign: 'center', width: '90px' } }, ''),
+          el('th', { style: { textAlign: 'center' } }, ''),
         )
       ));
       const tbody = el('tbody');
       details.forEach(d => {
         const badge = d.is_present == null
-          ? el('span', { class: 'badge', style: { background: '#f3f4f6', color: '#6b7280' } }, '— Chưa tick')
+          ? el('span', { class: 'badge badge-gray' }, 'Chưa tick')
           : d.is_present == 1
             ? el('span', { class: 'badge badge-green' }, 'Có mặt')
             : el('span', { class: 'badge badge-red' }, 'Vắng');
@@ -1601,20 +1827,22 @@ async function renderStudentStats(parts) {
           el('td', { style: { whiteSpace: 'pre-wrap' } }, d.teacher_note || '—'),
           el('td', { style: { textAlign: 'center' } },
             el('button', { class: 'btn btn-sm',
-              onClick: () => navigate('#session-edit/' + d.session_id) }, 'Điểm danh')
+              onClick: () => navigate('#session-edit/' + d.session_id) }, 'Sửa')
           ),
         ));
       });
       table.appendChild(tbody);
-      card.appendChild(table);
+      tableWrap.appendChild(table);
+      card.appendChild(tableWrap);
     }
     main.appendChild(card);
 
     // ============= Tổng hợp nhận xét bằng LLM =============
-    const aiCard = el('div', { class: 'card', style: { background: '#fffbeb', borderLeft: '4px solid #f59e0b' } });
+    const aiCard = el('div', { class: 'card', style: { background: 'var(--warning-bg)', borderLeft: '4px solid var(--warning)' } });
     aiCard.appendChild(el('h3', {}, '🤖 Tổng hợp nhận xét tháng bằng AI'));
-    aiCard.appendChild(el('p', { style: { color: '#6b7280', fontSize: '14px' } },
+    aiCard.appendChild(el('p', { class: 'muted text-sm' },
       'Tổng hợp tất cả nhận xét trong tháng của học sinh này thành 1 đoạn nhận xét chung. ' +
+      'Hệ thống tự động phát hiện cấp học (cấp 1 / lớp 1-5) để tạo giọng văn phù hợp. ' +
       'API key / base url chỉ dùng để gọi LLM, không lưu trên server.'));
 
     // Hàng chọn tháng + nhập API
@@ -1623,15 +1851,15 @@ async function renderStudentStats(parts) {
 
     const aiForm = el('div', { class: 'form-grid' });
     // Tháng
-    const now = new Date();
+    const aiNow = new Date();
     const monthSel = el('select', { id: 'aiMonth' },
       ...Array.from({ length: 12 }, (_, i) => {
         const m = i + 1;
-        const txt = `Tháng ${m}/${now.getFullYear()}`;
-        return el('option', { value: m, selected: m === (now.getMonth() + 1) ? 'selected' : null }, txt);
+        const txt = `Tháng ${m}/${aiNow.getFullYear()}`;
+        return el('option', { value: m, selected: m === (aiNow.getMonth() + 1) ? 'selected' : null }, txt);
       })
     );
-    const yearInp = el('input', { type: 'number', id: 'aiYear', value: String(saved.year || now.getFullYear()), min: '2020', max: '2100' });
+    const yearInp = el('input', { type: 'number', id: 'aiYear', value: String(saved.year || aiNow.getFullYear()), min: '2020', max: '2100' });
     aiForm.appendChild(el('div', { class: 'form-row' }, el('label', {}, 'Tháng'), monthSel));
     aiForm.appendChild(el('div', { class: 'form-row' }, el('label', {}, 'Năm'), yearInp));
 
@@ -1720,17 +1948,36 @@ async function renderStudentStats(parts) {
             '⚠ Tháng ' + m + '/' + y + ' chưa có nhận xét nào cho học sinh này. Hãy nhập nhận xét ở các buổi học trước rồi thử lại.'));
           return;
         }
+
+        // Tổng hợp số liệu tháng từ history để gửi cho LLM
+        const mStats = history.month_stats || {};
+        const mPresent = Number(mStats.present_count || 0);
+        const mAbsent  = Number(mStats.absent_count || 0);
+        const mTotal   = Number(mStats.total_sessions || (mPresent + mAbsent));
+        const mUnmarked = Math.max(0, mTotal - mPresent - mAbsent);
+        const monthlySummary = {
+          total_sessions: mTotal,
+          present: mPresent,
+          absent: mAbsent,
+          unmarked: mUnmarked,
+          avg_lesson_score: mStats.avg_lesson_score,
+          avg_exercise_score: mStats.avg_exercise_score,
+        };
+
         const r = await api('/ai/summarize-notes', {
           method: 'POST',
           body: {
             api_key, base_url, model,
+            student_id: Number(studentId),
             student_name: studentList.full_name,
             year: y, month: m,
-            grade_level: (currentClass && currentClass.grade_level) || 3,
+            grade_level: gradeLevel,
+            monthly_summary: monthlySummary,
             notes: data.notes.map(n => ({
               date: n.session_date,
               note: n.teacher_note,
-              score: n.lesson_score,
+              lesson_score: n.lesson_score,
+              exercise_score: n.exercise_score,
               grade: n.lesson_grade,
               present: n.is_present,
             })),
@@ -1851,7 +2098,7 @@ async function renderTeachers() {
     // Bảng danh sách GV
     const tableCard = el('div', { class: 'card' });
     tableCard.appendChild(el('h3', {}, 'Danh sách (' + teachers.length + ' giáo viên)'));
-    const table = el('table');
+    const table = el('table', { class: 'teachers-table' });
     table.appendChild(el('thead', {},
       el('tr', {},
         el('th', { style: { width: '40px' } }, 'STT'),
@@ -1877,9 +2124,11 @@ async function renderTeachers() {
         el('td', {},
           isMe
             ? el('span', { style: { color: '#9ca3af', fontSize: '13px' } }, '—')
-            : el('div', { style: { display: 'flex', gap: '4px' } },
+            : el('div', { class: 'actions-cell' },
                 el('button', { class: 'btn btn-sm',
                   onClick: () => openEditTeacherDialog(t, renderTeachers) }, '✏️ Sửa'),
+                el('button', { class: 'btn btn-sm btn-warning',
+                  onClick: () => openResetPasswordDialog(t, renderTeachers) }, '🔑 Reset MK'),
                 el('button', { class: 'btn btn-sm btn-danger',
                   onClick: async () => {
                     if (!confirm('Xoá giáo viên "' + t.full_name + '" (@' + t.username + ')?\n\n' +
@@ -1897,6 +2146,10 @@ async function renderTeachers() {
     });
     table.appendChild(tbody);
     tableCard.appendChild(table);
+    const wrapT = el('div', { class: 'table-wrapper' });
+    // Re-add table into wrapper (tableCard removed it above? No - appendChild moves, fix)
+    wrapT.appendChild(table);
+    tableCard.appendChild(wrapT);
     main.appendChild(tableCard);
   } catch (err) {
     main.innerHTML = `<div class="card empty">Lỗi: ${err.message}</div>`;
@@ -1904,42 +2157,45 @@ async function renderTeachers() {
 }
 
 // =====================================================
+// Helper: tạo modal chung, tra ve { overlay, modal, body, close }
+// =====================================================
+function createModal(title, desc) {
+  const overlay = el('div', { class: 'modal-overlay',
+    onClick: (e) => { if (e.target === overlay) close(); }
+  });
+  const modal = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
+  modal.appendChild(el('h2', {}, title));
+  if (desc) modal.appendChild(el('p', { class: 'modal-desc' }, desc));
+  const body = el('div', {});
+  const actions = el('div', { class: 'modal-actions' });
+  modal.appendChild(body);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  function close() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); document.removeEventListener('keydown', onKey); }
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  return { overlay, modal, body, actions, close };
+}
+
+// =====================================================
 // Modal: Sửa lớp học
 // =====================================================
 async function openEditClassDialog(c, teachers, onDone) {
-  // Luôn lấy danh sách GV mới nhất nếu là admin
   if (currentTeacher.is_admin) {
     try { teachers = await api('/teachers'); } catch (_) { /* giữ nguyên */ }
   }
-  // Tạo overlay
-  const overlay = el('div', {
-    style: {
-      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
-    },
-    onClick: (e) => { if (e.target === overlay) closeModal(); }
-  });
-  const modal = el('div', {
-    style: {
-      background: '#fff', borderRadius: '12px', padding: '24px',
-      maxWidth: '480px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
-    }
-  });
-  modal.appendChild(el('h2', { style: { marginTop: 0, color: '#4f46e5' } }, '✏️ Sửa lớp #' + c.id));
-  modal.appendChild(el('p', { style: { color: '#6b7280', fontSize: '14px' } },
-    'Cập nhật tên lớp, cấp học, giáo viên phụ trách.'));
+  const m = createModal('✏️ Sửa lớp #' + c.id, 'Cập nhật tên lớp, cấp học, giáo viên phụ trách.');
 
-  // Tên
   const nameInp = el('input', { type: 'text', id: 'editClassName', value: c.name || '', required: true });
-  modal.appendChild(el('div', { class: 'form-row' },
-    el('label', {}, 'Tên lớp *'), nameInp));
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Tên lớp ', el('span', { class: 'required' }, '*')), nameInp));
 
-  // Cấp học
   const gradeInp = el('input', { type: 'text', id: 'editClassGrade', value: c.grade_level || '', placeholder: 'VD: Lớp 10' });
-  modal.appendChild(el('div', { class: 'form-row' },
+  m.body.appendChild(el('div', { class: 'form-row' },
     el('label', {}, 'Cấp học'), gradeInp));
 
-  // Giáo viên (chỉ admin mới đổi được)
   if (currentTeacher.is_admin) {
     const sel = el('select', { id: 'editClassTeacher' });
     sel.appendChild(el('option', { value: '' }, '— Chưa gán —'));
@@ -1948,16 +2204,14 @@ async function openEditClassDialog(c, teachers, onDone) {
       if (Number(t.id) === Number(c.teacher_id)) opt.selected = true;
       sel.appendChild(opt);
     });
-    modal.appendChild(el('div', { class: 'form-row' },
+    m.body.appendChild(el('div', { class: 'form-row' },
       el('label', {}, 'Giáo viên phụ trách (admin)'), sel));
   } else {
-    modal.appendChild(el('p', { style: { fontSize: '13px', color: '#9ca3af' } },
+    m.body.appendChild(el('p', { class: 'muted text-sm' },
       'Giáo viên phụ trách: ' + (c.teacher_name || '—') + ' (chỉ admin mới đổi được)'));
   }
 
-  // Buttons
-  const btnRow = el('div', { style: { display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' } });
-  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: closeModal }, 'Huỷ');
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
   const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
   btnSave.addEventListener('click', async function () {
     const newName = nameInp.value.trim();
@@ -1967,107 +2221,285 @@ async function openEditClassDialog(c, teachers, onDone) {
       const sel = $('#editClassTeacher');
       body.teacher_id = sel.value ? Number(sel.value) : null;
     }
-    btnSave.disabled = true; btnSave.textContent = '⏳ Đang lưu...';
+    btnSave.classList.add('loading'); btnSave.disabled = true;
     try {
       await api('/classes/' + c.id, { method: 'PUT', body });
       toast('Đã cập nhật lớp', 'success');
-      closeModal();
+      m.close();
       if (typeof onDone === 'function') onDone();
     } catch (err) {
       toast(err.message, 'error');
-      btnSave.disabled = false; btnSave.textContent = '💾 Lưu';
+      btnSave.classList.remove('loading'); btnSave.disabled = false;
     }
   });
-  btnRow.appendChild(btnCancel);
-  btnRow.appendChild(btnSave);
-  modal.appendChild(btnRow);
-  overlay.appendChild(modal);
-
-  document.body.appendChild(overlay);
+  m.actions.appendChild(btnCancel);
+  m.actions.appendChild(btnSave);
   nameInp.focus();
   nameInp.select();
-  function closeModal() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
-  // Esc to close
-  const onKey = (e) => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onKey); } };
-  document.addEventListener('keydown', onKey);
 }
 
 // =====================================================
 // Modal: Sửa giáo viên
 // =====================================================
 function openEditTeacherDialog(t, onDone) {
-  const overlay = el('div', {
-    style: {
-      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
-    },
-    onClick: (e) => { if (e.target === overlay) closeModal(); }
-  });
-  const modal = el('div', {
-    style: {
-      background: '#fff', borderRadius: '12px', padding: '24px',
-      maxWidth: '480px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
-    }
-  });
-  modal.appendChild(el('h2', { style: { marginTop: 0, color: '#4f46e5' } }, '✏️ Sửa giáo viên'));
-  modal.appendChild(el('p', { style: { color: '#6b7280', fontSize: '14px' } },
-    'Username và mật khẩu không thể sửa tại đây (liên hệ super admin nếu cần reset).'));
+  const m = createModal('✏️ Sửa giáo viên', 'Username và mật khẩu không thể sửa tại đây.');
 
-  // Họ tên
   const nameInp = el('input', { type: 'text', id: 'editTeacherName', value: t.full_name || '', required: true });
-  modal.appendChild(el('div', { class: 'form-row' },
-    el('label', {}, 'Họ tên *'), nameInp));
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Họ tên ', el('span', { class: 'required' }, '*')), nameInp));
 
-  // Username (readonly)
-  modal.appendChild(el('div', { class: 'form-row' },
+  m.body.appendChild(el('div', { class: 'form-row' },
     el('label', {}, 'Tên đăng nhập'),
-    el('input', { type: 'text', value: t.username || '', disabled: true,
-      style: { background: '#f3f4f6', cursor: 'not-allowed' } })
+    el('input', { type: 'text', value: t.username || '', disabled: true })
   ));
 
-  // Vai trò
   const isMe = t.id === currentTeacher.id;
+  const isAdmin = (t.is_admin == 1 || t.is_admin === true);
   const roleSel = el('select', { id: 'editTeacherRole' });
-  roleSel.appendChild(el('option', { value: '0', selected: !(t.is_admin == 1 || t.is_admin === true) ? 'selected' : null }, 'Giáo viên thường'));
-  roleSel.appendChild(el('option', { value: '1', selected:  (t.is_admin == 1 || t.is_admin === true) ? 'selected' : null }, 'Quản trị viên (admin)'));
+  roleSel.appendChild(el('option', { value: '0', selected: !isAdmin ? 'selected' : null }, 'Giáo viên thường'));
+  roleSel.appendChild(el('option', { value: '1', selected:  isAdmin ? 'selected' : null }, 'Quản trị viên (admin)'));
   if (isMe) {
     roleSel.disabled = true;
     roleSel.title = 'Không thể tự hạ quyền chính mình';
   }
-  modal.appendChild(el('div', { class: 'form-row' },
+  m.body.appendChild(el('div', { class: 'form-row' },
     el('label', {}, 'Vai trò' + (isMe ? ' (không thể đổi)' : '')), roleSel));
 
-  // Buttons
-  const btnRow = el('div', { style: { display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' } });
-  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: closeModal }, 'Huỷ');
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
   const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
   btnSave.addEventListener('click', async function () {
     const newName = nameInp.value.trim();
     if (!newName) { toast('Họ tên không được để trống', 'error'); return; }
     const body = { full_name: newName };
     if (!isMe) body.is_admin = roleSel.value === '1';
-    btnSave.disabled = true; btnSave.textContent = '⏳ Đang lưu...';
+    btnSave.classList.add('loading'); btnSave.disabled = true;
     try {
       await api('/teachers/' + t.id, { method: 'PUT', body });
       toast('Đã cập nhật giáo viên', 'success');
-      closeModal();
+      m.close();
       if (typeof onDone === 'function') onDone();
     } catch (err) {
       toast(err.message, 'error');
-      btnSave.disabled = false; btnSave.textContent = '💾 Lưu';
+      btnSave.classList.remove('loading'); btnSave.disabled = false;
     }
   });
-  btnRow.appendChild(btnCancel);
-  btnRow.appendChild(btnSave);
-  modal.appendChild(btnRow);
-  overlay.appendChild(modal);
-
-  document.body.appendChild(overlay);
+  m.actions.appendChild(btnCancel);
+  m.actions.appendChild(btnSave);
   nameInp.focus();
   nameInp.select();
-  function closeModal() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
-  const onKey = (e) => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onKey); } };
-  document.addEventListener('keydown', onKey);
+}
+
+// =====================================================
+// Modal: Sửa học sinh
+// =====================================================
+function openEditStudentDialog(s, onDone) {
+  const m = createModal('✏️ Sửa học sinh', 'Cập nhật họ tên, mã HS, giới tính, ngày sinh.');
+
+  const nameInp = el('input', { type: 'text', value: s.full_name || '', required: true });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Họ tên ', el('span', { class: 'required' }, '*')), nameInp));
+
+  const codeInp = el('input', { type: 'text', value: s.student_code || '', required: true, placeholder: 'HS001' });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Mã học sinh ', el('span', { class: 'required' }, '*')),
+    codeInp,
+    el('div', { class: 'help' }, 'Mã phải duy nhất trong hệ thống')));
+
+  const genderSel = el('select', {});
+  [
+    ['', '--'],
+    ['M', 'Nam'],
+    ['F', 'Nữ'],
+    ['O', 'Khác'],
+  ].forEach(([v, l]) => {
+    const o = el('option', { value: v }, l);
+    if ((s.gender || '') === v) o.selected = true;
+    genderSel.appendChild(o);
+  });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Giới tính'), genderSel));
+
+  const dobInp = el('input', { type: 'date', value: s.date_of_birth || '' });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Ngày sinh'), dobInp));
+
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
+  const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
+  btnSave.addEventListener('click', async function () {
+    const newName = nameInp.value.trim();
+    const newCode = codeInp.value.trim();
+    if (!newName) { toast('Họ tên không được để trống', 'error'); return; }
+    if (!newCode) { toast('Mã học sinh không được để trống', 'error'); return; }
+    btnSave.classList.add('loading'); btnSave.disabled = true;
+    try {
+      await api('/students/' + s.id, {
+        method: 'PUT',
+        body: {
+          full_name: newName,
+          student_code: newCode,
+          gender: genderSel.value || null,
+          date_of_birth: dobInp.value || null,
+        }
+      });
+      toast('Đã cập nhật học sinh', 'success');
+      m.close();
+      if (typeof onDone === 'function') onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+      btnSave.classList.remove('loading'); btnSave.disabled = false;
+    }
+  });
+  m.actions.appendChild(btnCancel);
+  m.actions.appendChild(btnSave);
+  nameInp.focus();
+  nameInp.select();
+}
+
+// =====================================================
+// Modal: Sửa buổi học
+// =====================================================
+function openEditSessionDialog(s, onDone) {
+  const m = createModal('✏️ Sửa buổi học #' + s.id, 'Cập nhật ngày, tiêu đề và ghi chú.');
+
+  const dateInp = el('input', { type: 'date', value: s.session_date || '', required: true });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Ngày học ', el('span', { class: 'required' }, '*')), dateInp));
+
+  const titleInp = el('input', { type: 'text', value: s.title || '', placeholder: 'VD: Unit 5: Travel - Speaking' });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Tiêu đề'), titleInp));
+
+  const noteTa = el('textarea', { rows: '3', placeholder: 'Ghi chú cho buổi học...' });
+  noteTa.value = s.note || '';
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Ghi chú'), noteTa));
+
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
+  const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
+  btnSave.addEventListener('click', async function () {
+    if (!dateInp.value) { toast('Vui lòng chọn ngày học', 'error'); return; }
+    btnSave.classList.add('loading'); btnSave.disabled = true;
+    try {
+      await api('/sessions/' + s.id, {
+        method: 'PUT',
+        body: {
+          session_date: dateInp.value,
+          title: titleInp.value.trim(),
+          note: noteTa.value,
+        }
+      });
+      toast('Đã cập nhật buổi học', 'success');
+      m.close();
+      if (typeof onDone === 'function') onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+      btnSave.classList.remove('loading'); btnSave.disabled = false;
+    }
+  });
+  m.actions.appendChild(btnCancel);
+  m.actions.appendChild(btnSave);
+  dateInp.focus();
+}
+
+// =====================================================
+// Modal: Đổi mật khẩu (bắt buộc nhập đúng mật khẩu hiện tại)
+// =====================================================
+function openChangePasswordDialog() {
+  if (!currentTeacher) return navigate('#');
+  const m = createModal('🔑 Đổi mật khẩu',
+    'Nhập mật khẩu hiện tại và mật khẩu mới. Mật khẩu mới phải có ít nhất 4 ký tự và khác mật khẩu hiện tại.');
+
+  const curInp = el('input', { type: 'password', id: 'cpCurrent', required: true, autocomplete: 'current-password', placeholder: 'Mật khẩu hiện tại' });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Mật khẩu hiện tại ', el('span', { class: 'required' }, '*')), curInp));
+
+  const newInp = el('input', { type: 'password', id: 'cpNew', required: true, autocomplete: 'new-password', placeholder: 'Mật khẩu mới (≥ 4 ký tự)', minlength: 4 });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Mật khẩu mới ', el('span', { class: 'required' }, '*')), newInp));
+
+  const confInp = el('input', { type: 'password', id: 'cpConfirm', required: true, autocomplete: 'new-password', placeholder: 'Nhập lại mật khẩu mới', minlength: 4 });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Nhập lại mật khẩu mới ', el('span', { class: 'required' }, '*')), confInp,
+    el('div', { class: 'help' }, 'Mật khẩu mới phải khác mật khẩu hiện tại.')));
+
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
+  const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Đổi mật khẩu');
+    btnSave.addEventListener('click', async function () {
+    const cur = curInp.value;
+    const np  = newInp.value;
+    const cp  = confInp.value;
+    if (!cur) { toast('Vui lòng nhập mật khẩu hiện tại', 'error'); return; }
+    if (!np)  { toast('Vui lòng nhập mật khẩu mới', 'error'); return; }
+    if (np.length < 4) { toast('Mật khẩu mới phải có ít nhất 4 ký tự', 'error'); return; }
+    if (np !== cp) { toast('Mật khẩu mới nhập lại không khớp', 'error'); return; }
+    if (np === cur) { toast('Mật khẩu mới phải khác mật khẩu hiện tại', 'error'); return; }
+    btnSave.classList.add('loading'); btnSave.disabled = true;
+    try {
+      const r = await api('/auth/change-password', {
+        method: 'POST',
+        noAutoLogout: true,
+        body: { current_password: cur, new_password: np, new_password_confirm: cp }
+      });
+      toast(r.message || 'Đổi mật khẩu thành công', 'success');
+      m.close();
+    } catch (err) {
+      toast(err.message, 'error');
+      btnSave.classList.remove('loading'); btnSave.disabled = false;
+    }
+  });
+  m.actions.appendChild(btnCancel);
+  m.actions.appendChild(btnSave);
+  curInp.focus();
+}
+
+// =====================================================
+// Modal: Admin reset mật khẩu cho giáo viên khác
+// =====================================================
+function openResetPasswordDialog(teacher, onDone) {
+  if (!currentTeacher || !currentTeacher.is_admin) {
+    return toast('Chỉ quản trị viên mới có quyền này', 'error');
+  }
+  if (teacher.id === currentTeacher.id) {
+    return toast('Không thể reset mật khẩu của chính mình. Hãy dùng "Đổi MK"', 'error');
+  }
+  const m = createModal('🔑 Reset mật khẩu',
+    'Đặt lại mật khẩu cho giáo viên "' + teacher.full_name + '" (@' + teacher.username + ').');
+
+  const newInp = el('input', { type: 'password', id: 'rpNew', required: true, autocomplete: 'new-password', placeholder: 'Mật khẩu mới (≥ 4 ký tự)', minlength: 4 });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Mật khẩu mới ', el('span', { class: 'required' }, '*')), newInp));
+
+  const confInp = el('input', { type: 'password', id: 'rpConfirm', required: true, autocomplete: 'new-password', placeholder: 'Nhập lại mật khẩu mới', minlength: 4 });
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', {}, 'Nhập lại mật khẩu mới ', el('span', { class: 'required' }, '*')), confInp,
+    el('div', { class: 'help' }, 'Giáo viên sẽ cần đăng nhập lại với mật khẩu mới này.')));
+
+  const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
+  const btnSave = el('button', { class: 'btn btn-warning', type: 'button' }, '🔑 Reset mật khẩu');
+    btnSave.addEventListener('click', async function () {
+    const np = newInp.value;
+    const cp = confInp.value;
+    if (!np) { toast('Vui lòng nhập mật khẩu mới', 'error'); return; }
+    if (np.length < 4) { toast('Mật khẩu phải có ít nhất 4 ký tự', 'error'); return; }
+    if (np !== cp) { toast('Mật khẩu nhập lại không khớp', 'error'); return; }
+    btnSave.classList.add('loading'); btnSave.disabled = true;
+    try {
+      const r = await api('/teachers/' + teacher.id + '/reset-password', {
+        method: 'PUT',
+        noAutoLogout: true,
+        body: { new_password: np, new_password_confirm: cp }
+      });
+      toast(r.message || 'Đã reset mật khẩu', 'success');
+      m.close();
+      if (typeof onDone === 'function') onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+      btnSave.classList.remove('loading'); btnSave.disabled = false;
+    }
+  });
+  m.actions.appendChild(btnCancel);
+  m.actions.appendChild(btnSave);
+  newInp.focus();
 }
 
 // =====================================================

@@ -103,4 +103,34 @@ router.delete('/:id', requireTeacher, requireAdmin, async (req, res) => {
   }
 });
 
+// PUT /api/teachers/:id/reset-password  - chỉ admin, reset mật khẩu cho GV khác
+// Body: { new_password, new_password_confirm }
+router.put('/:id/reset-password', requireTeacher, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { new_password, new_password_confirm } = req.body || {};
+  if (!new_password) {
+    return res.status(400).json({ error: 'Vui lòng nhập mật khẩu mới' });
+  }
+  if (new_password_confirm !== undefined && new_password !== new_password_confirm) {
+    return res.status(400).json({ error: 'Mật khẩu nhập lại không khớp' });
+  }
+  if (String(new_password).length < 4) {
+    return res.status(400).json({ error: 'Mật khẩu phải có ít nhất 4 ký tự' });
+  }
+  try {
+    const [rows] = await pool.query('SELECT id, username, full_name FROM teachers WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Không tìm thấy giáo viên' });
+    }
+    await pool.query('UPDATE teachers SET password_hash = ? WHERE id = ?', [hashPassword(String(new_password)), id]);
+    res.json({
+      ok: true,
+      message: 'Đã reset mật khẩu cho ' + rows[0].full_name,
+      teacher: { id: rows[0].id, username: rows[0].username, full_name: rows[0].full_name },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
