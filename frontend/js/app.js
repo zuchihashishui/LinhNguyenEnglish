@@ -1251,8 +1251,8 @@ function paintSessionEditor(editable) {
     { w: '90px',  label: 'Có mặt' },
     { w: '110px', label: 'Quay video bài cũ' },
     { w: '110px', label: 'BT online về nhà' },
-    { w: '95px',  label: 'Điểm bài cũ (1.0-10.0, bước 0.5)' },
-    { w: '95px',  label: 'Điểm bài tập (1.0-10.0, bước 0.5)' },
+    { w: '95px',  label: 'Điểm bài cũ' },
+    { w: '95px',  label: 'Điểm bài tập' },
     { w: '150px', label: 'Xếp loại' },
     { w: null,    label: 'Nhận xét' },
   ];
