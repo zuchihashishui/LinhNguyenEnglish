@@ -7,6 +7,18 @@ const store = require('../mockData');
 
 const ALLOWED_GRADES = ['Tốt', 'Khá', 'Trung bình', 'Yếu'];
 
+// Validate diem (mock): dong bo voi routes/attendances.js
+// Cho phep toi da 1 chu so thap phan (vd 5.5, 8.5), trong [1, 10].
+function validateScore(val, label) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n < 1 || n > 10) return 'Điểm ' + label + ' phải trong khoảng 1 đến 10';
+  if (Math.round(n * 10) !== n * 10) {
+    return 'Điểm ' + label + ' chỉ được nhập tối đa 1 chữ số thập phân (vd 5.5, 8.5)';
+  }
+  return null;
+}
+
 const classesRouter = express.Router();
 const apiRouter = express.Router(); // gắn /classes/:id/students, /students/:id, /classes/:id/sessions, /sessions/:id, /sessions/:id/attendances
 
@@ -210,20 +222,16 @@ apiRouter.post('/sessions/:id/attendances', (req, res) => {
 
   for (const it of items) {
     if (!it.student_id) return res.status(400).json({ error: 'Thiếu student_id' });
-    if (it.lesson_score !== null && it.lesson_score !== undefined && it.lesson_score !== '') {
-      const n = Number(it.lesson_score);
-      if (!Number.isInteger(n) || n < 1 || n > 10) {
-        return res.status(400).json({ error: 'Điểm bài cũ phải là số nguyên từ 1 đến 10' });
-      }
-    }
-    if (it.lesson_grade && !ALLOWED_GRADES.includes(it.lesson_grade)) {
-      return res.status(400).json({ error: `Xếp loại không hợp lệ: ${it.lesson_grade}` });
-    }
+    const err1 = validateScore(it.lesson_score, 'bài cũ');
+    if (err1) return res.status(400).json({ error: err1 });
+    const err2 = validateScore(it.exercise_score, 'bài tập');
+    if (err2) return res.status(400).json({ error: err2 });
   }
 
   for (const it of items) {
     const idx = store.attendances.findIndex(a => a.session_id === sessionId && a.student_id === it.student_id);
     const score = (it.lesson_score === '' || it.lesson_score == null) ? null : Number(it.lesson_score);
+    const exScore = (it.exercise_score === '' || it.exercise_score == null) ? null : Number(it.exercise_score);
     const grade = it.lesson_grade || null;
     const note  = it.teacher_note || null;
     const data = {
@@ -231,7 +239,10 @@ apiRouter.post('/sessions/:id/attendances', (req, res) => {
       session_id: sessionId,
       student_id: it.student_id,
       is_present: it.is_present ? 1 : 0,
+      video_lesson_done: it.video_lesson_done ? 1 : 0,
+      exercise_online_done: it.exercise_online_done ? 1 : 0,
       lesson_score: score,
+      exercise_score: exScore,
       lesson_grade: grade,
       teacher_note: note,
     };

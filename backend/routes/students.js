@@ -154,6 +154,8 @@ router.get('/students/:id/stats', async (req, res) => {
          COUNT(*) AS total_sessions,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
+         SUM(CASE WHEN a.video_lesson_done    = 1 THEN 1 ELSE 0 END) AS video_done_count,
+         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
          ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
        FROM attendances a
@@ -250,6 +252,8 @@ router.get('/students/:id/history', async (req, res) => {
          COUNT(se.id) AS total_sessions,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
+         SUM(CASE WHEN a.video_lesson_done    = 1 THEN 1 ELSE 0 END) AS video_done_count,
+         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
          ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
        FROM sessions se
@@ -264,20 +268,23 @@ router.get('/students/:id/history', async (req, res) => {
          COUNT(*) AS total_sessions,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
+         SUM(CASE WHEN a.video_lesson_done    = 1 THEN 1 ELSE 0 END) AS video_done_count,
+         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
          ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
        FROM attendances a WHERE a.student_id = ?`,
       [studentId]
     );
 
-    // Danh sách buổi học trong tháng + attendance (1 query)
+// Danh sách buổi học trong tháng + attendance (1 query)
     const [details] = await pool.query(
       `SELECT se.id AS session_id, se.session_date, se.title,
-              a.is_present, a.lesson_score, a.exercise_score, a.lesson_grade, a.teacher_note
-         FROM sessions se
-         LEFT JOIN attendances a ON a.session_id = se.id AND a.student_id = ?
-        WHERE se.class_id = ? AND se.session_date BETWEEN ? AND ?
-        ORDER BY se.session_date ASC`,
+              a.is_present, a.video_lesson_done, a.exercise_online_done,
+              a.lesson_score, a.exercise_score, a.lesson_grade, a.teacher_note
+        FROM sessions se
+        LEFT JOIN attendances a ON a.session_id = se.id AND a.student_id = ?
+       WHERE se.class_id = ? AND se.session_date BETWEEN ? AND ?
+       ORDER BY se.session_date ASC`,
       [studentId, sRows[0].class_id, from, to]
     );
 

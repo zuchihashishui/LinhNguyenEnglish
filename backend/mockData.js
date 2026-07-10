@@ -57,7 +57,7 @@ const NOTES = [
   'Cần cố gắng thêm.',
 ];
 
-const attendances = []; // {id, session_id, student_id, is_present, lesson_score, lesson_grade, teacher_note}
+const attendances = []; // {id, session_id, student_id, is_present, video_lesson_done, exercise_online_done, lesson_score, lesson_grade, teacher_note}
 
 function gradeForScore(score) {
   if (score == null) return null;
@@ -129,7 +129,10 @@ function getAttendancesForSession(sessionId) {
       full_name: st.full_name,
       student_code: st.student_code,
       is_present: att ? att.is_present : 0,
+      video_lesson_done: att ? (att.video_lesson_done ?? 0) : 0,
+      exercise_online_done: att ? (att.exercise_online_done ?? 0) : 0,
       lesson_score: att ? att.lesson_score : null,
+      exercise_score: att ? (att.exercise_score ?? null) : null,
       lesson_grade: att ? att.lesson_grade : null,
       teacher_note: att ? att.teacher_note : null,
     };

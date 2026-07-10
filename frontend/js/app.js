@@ -170,6 +170,8 @@ function saveDraft(sessionId, attendances) {
       .map(a => ({
         student_id: a.student_id,
         is_present: a.is_present,
+        video_lesson_done: a.video_lesson_done,
+        exercise_online_done: a.exercise_online_done,
         lesson_score: a.lesson_score,
         exercise_score: a.exercise_score,
         lesson_grade: a.lesson_grade,
@@ -972,6 +974,8 @@ async function renderSessionEdit(parts) {
           const d = map[a.student_id];
           if (!d) return;
           a.is_present     = d.is_present;
+          a.video_lesson_done = d.video_lesson_done;
+          a.exercise_online_done = d.exercise_online_done;
           a.lesson_score   = d.lesson_score;
           a.exercise_score = d.exercise_score;
           a.lesson_grade   = d.lesson_grade;
@@ -1245,8 +1249,10 @@ function paintSessionEditor(editable) {
     { w: '40px',  label: '#' },
     { w: null,    label: 'Họ tên' },
     { w: '90px',  label: 'Có mặt' },
-    { w: '90px',  label: 'Điểm bài cũ (1-10)' },
-    { w: '90px',  label: 'Điểm bài tập (1-10)' },
+    { w: '110px', label: 'Quay video bài cũ' },
+    { w: '110px', label: 'BT online về nhà' },
+    { w: '95px',  label: 'Điểm bài cũ (1.0-10.0, bước 0.5)' },
+    { w: '95px',  label: 'Điểm bài tập (1.0-10.0, bước 0.5)' },
     { w: '150px', label: 'Xếp loại' },
     { w: null,    label: 'Nhận xét' },
   ];
@@ -1295,13 +1301,37 @@ function paintSessionEditor(editable) {
       tdPresent.appendChild(chk);
       tr.appendChild(tdPresent);
 
+      // Quay video bài cũ - checkbox tương tự Có mặt
+      const tdVideo = document.createElement('td');
+      tdVideo.className = 'present-cell';
+      tdVideo.style.textAlign = 'center';
+      const chkVideo = document.createElement('input');
+      chkVideo.type = 'checkbox';
+      chkVideo.checked = a.video_lesson_done == 1;
+      chkVideo.setAttribute('data-field', 'video_lesson_done');
+      chkVideo.addEventListener('change', function () { a.video_lesson_done = chkVideo.checked ? 1 : 0; scheduleDraftSave(); });
+      tdVideo.appendChild(chkVideo);
+      tr.appendChild(tdVideo);
+
+      // Bài tập online về nhà - checkbox tương tự Có mặt
+      const tdEx = document.createElement('td');
+      tdEx.className = 'present-cell';
+      tdEx.style.textAlign = 'center';
+      const chkEx = document.createElement('input');
+      chkEx.type = 'checkbox';
+      chkEx.checked = a.exercise_online_done == 1;
+      chkEx.setAttribute('data-field', 'exercise_online_done');
+      chkEx.addEventListener('change', function () { a.exercise_online_done = chkEx.checked ? 1 : 0; scheduleDraftSave(); });
+      tdEx.appendChild(chkEx);
+      tr.appendChild(tdEx);
+
       // Điểm
       const tdScore = document.createElement('td');
       const scoreInp = document.createElement('input');
       scoreInp.type = 'number';
       scoreInp.min = '1';
       scoreInp.max = '10';
-      scoreInp.step = '1';
+      scoreInp.step = '0.5';
       scoreInp.value = a.lesson_score != null ? String(a.lesson_score) : '';
       scoreInp.style.cssText = 'width:70px;padding:4px;border:1px solid #d1d5db;border-radius:4px';
       // Auto cập nhật xếp loại theo điểm
@@ -1340,7 +1370,7 @@ function paintSessionEditor(editable) {
       exInp.type = 'number';
       exInp.min = '1';
       exInp.max = '10';
-      exInp.step = '1';
+      exInp.step = '0.5';
       exInp.value = a.exercise_score != null ? String(a.exercise_score) : '';
       exInp.style.cssText = 'width:70px;padding:4px;border:1px solid #d1d5db;border-radius:4px';
       exInp.placeholder = 'BT';
@@ -1471,6 +1501,8 @@ function paintSessionEditor(editable) {
         const items = validItems.map(a => ({
           student_id: a.student_id,
           is_present: a.is_present == 1,
+          video_lesson_done: a.video_lesson_done == 1,
+          exercise_online_done: a.exercise_online_done == 1,
           lesson_score: (a.lesson_score === '' || a.lesson_score == null || a.lesson_score === undefined)
             ? null : Number(a.lesson_score),
           exercise_score: (a.exercise_score === '' || a.exercise_score == null || a.exercise_score === undefined)
@@ -1772,8 +1804,12 @@ async function renderStudentStats(parts) {
     const total = Number(ms.total_sessions || 0);
     const present = Number(ms.present_count || 0);
     const absent = Number(ms.absent_count || 0);
+    const videoDone = Number(ms.video_done_count || 0);
+    const exerciseDone = Number(ms.exercise_done_count || 0);
     const unmarked = total - present - absent;
     const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+    const videoRate = total > 0 ? Math.round((videoDone / total) * 100) : 0;
+    const exerciseRate = total > 0 ? Math.round((exerciseDone / total) * 100) : 0;
     const avgScore = ms.avg_lesson_score;
     const avgExScore = ms.avg_exercise_score;
 
@@ -1806,6 +1842,16 @@ async function renderStudentStats(parts) {
         el('div', { class: 'stat-label' }, 'ĐTB bài tập'),
         el('div', { class: 'stat-value' }, avgExScore != null ? avgExScore + ' đ' : '—')
       ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'Quay video bài cũ'),
+        el('div', { class: 'stat-value' }, videoDone + '/' + total),
+        el('div', { class: 'stat-hint' }, videoRate + '%')
+      ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'BT online về nhà'),
+        el('div', { class: 'stat-value' }, exerciseDone + '/' + total),
+        el('div', { class: 'stat-hint' }, exerciseRate + '%')
+      ),
     );
     main.appendChild(overview);
 
@@ -1830,6 +1876,8 @@ async function renderStudentStats(parts) {
           el('th', {}, 'Ngày'),
           el('th', {}, 'Chủ đề'),
           el('th', { style: { textAlign: 'center' } }, 'Trạng thái'),
+          el('th', { style: { textAlign: 'center' } }, 'Quay video'),
+          el('th', { style: { textAlign: 'center' } }, 'BT online'),
           el('th', { style: { textAlign: 'center' } }, 'Điểm bài cũ'),
           el('th', { style: { textAlign: 'center' } }, 'Điểm bài tập'),
           el('th', { style: { textAlign: 'center' } }, 'Xếp loại'),
@@ -1848,6 +1896,14 @@ async function renderStudentStats(parts) {
           el('td', {}, el('strong', {}, formatDate(d.session_date))),
           el('td', {}, d.title || '—'),
           el('td', { style: { textAlign: 'center' } }, badge),
+          el('td', { style: { textAlign: 'center' } },
+            d.video_lesson_done == 1
+              ? el('span', { class: 'badge badge-green' }, '✓ Có')
+              : el('span', { class: 'badge badge-gray' }, '—')),
+          el('td', { style: { textAlign: 'center' } },
+            d.exercise_online_done == 1
+              ? el('span', { class: 'badge badge-green' }, '✓ Có')
+              : el('span', { class: 'badge badge-gray' }, '—')),
           el('td', { style: { textAlign: 'center' } }, d.lesson_score != null ? String(d.lesson_score) : '—'),
           el('td', { style: { textAlign: 'center' } }, d.exercise_score != null ? String(d.exercise_score) : '—'),
           el('td', { style: { textAlign: 'center' } }, d.lesson_grade || '—'),
@@ -1989,6 +2045,8 @@ async function renderStudentStats(parts) {
           unmarked: mUnmarked,
           avg_lesson_score: mStats.avg_lesson_score,
           avg_exercise_score: mStats.avg_exercise_score,
+          video_done: Number(mStats.video_done_count || 0),
+          exercise_online_done: Number(mStats.exercise_done_count || 0),
         };
 
         const r = await api('/ai/summarize-notes', {

@@ -7,6 +7,18 @@ router.use(requireTeacher);
 
 const ALLOWED_GRADES = ['Tốt', 'Khá', 'Trung bình', 'Yếu'];
 
+// Validate diem: so nguyen hoac 1 chu so thap phan (vd 5.5, 8.5), trong khoang [1, 10].
+function validateScore(val, label) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n < 1 || n > 10) return 'Điểm ' + label + ' phải trong khoảng 1 đến 10';
+  // Cho phep toi da 1 chu so thap phan (5, 5.5; KHONG cho 5.25)
+  if (Math.round(n * 10) !== n * 10) {
+    return 'Điểm ' + label + ' chỉ được nhập tối đa 1 chữ số thập phân (vd 5.5, 8.5)';
+  }
+  return null;
+}
+
 async function canAccessSession(req, sessionId) {
   const [rows] = await pool.query(
     'SELECT s.class_id, c.teacher_id FROM sessions s \
@@ -35,18 +47,10 @@ router.post('/sessions/:id/attendances', async (req, res) => {
     if (!it.student_id) {
       return res.status(400).json({ error: 'Thiếu student_id' });
     }
-    if (it.lesson_score !== null && it.lesson_score !== undefined && it.lesson_score !== '') {
-      const n = Number(it.lesson_score);
-      if (!Number.isInteger(n) || n < 1 || n > 10) {
-        return res.status(400).json({ error: 'Điểm bài cũ phải là số nguyên từ 1 đến 10' });
-      }
-    }
-    if (it.exercise_score !== null && it.exercise_score !== undefined && it.exercise_score !== '') {
-      const m = Number(it.exercise_score);
-      if (!Number.isInteger(m) || m < 1 || m > 10) {
-        return res.status(400).json({ error: 'Điểm bài tập phải là số nguyên từ 1 đến 10' });
-      }
-    }
+    const err1 = validateScore(it.lesson_score, 'bài cũ');
+    if (err1) return res.status(400).json({ error: err1 });
+    const err2 = validateScore(it.exercise_score, 'bài tập');
+    if (err2) return res.status(400).json({ error: err2 });
     if (it.lesson_grade && !ALLOWED_GRADES.includes(it.lesson_grade)) {
       return res.status(400).json({ error: `Xếp loại không hợp lệ: ${it.lesson_grade}` });
     }
@@ -57,6 +61,8 @@ router.post('/sessions/:id/attendances', async (req, res) => {
     await conn.beginTransaction();
     for (const it of items) {
       const isPresent = it.is_present ? 1 : 0;
+      const videoDone = it.video_lesson_done ? 1 : 0;
+      const exOnlineDone = it.exercise_online_done ? 1 : 0;
       const score = (it.lesson_score === '' || it.lesson_score === undefined || it.lesson_score === null)
         ? null : Number(it.lesson_score);
       const exScore = (it.exercise_score === '' || it.exercise_score === undefined || it.exercise_score === null)
@@ -65,16 +71,19 @@ router.post('/sessions/:id/attendances', async (req, res) => {
       const note = it.teacher_note || null;
 
       await conn.query(
-        `INSERT INTO attendances (session_id, student_id, is_present, lesson_score, lesson_grade, exercise_score, teacher_note)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO attendances (session_id, student_id, is_present, video_lesson_done, exercise_online_done,
+                                  lesson_score, lesson_grade, exercise_score, teacher_note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            is_present = VALUES(is_present),
+           video_lesson_done = VALUES(video_lesson_done),
+           exercise_online_done = VALUES(exercise_online_done),
            lesson_score = VALUES(lesson_score),
            lesson_grade = VALUES(lesson_grade),
            exercise_score = VALUES(exercise_score),
            teacher_note = VALUES(teacher_note),
            updated_at = CURRENT_TIMESTAMP`,
-        [sessionId, it.student_id, isPresent, score, grade, exScore, note]
+        [sessionId, it.student_id, isPresent, videoDone, exOnlineDone, score, grade, exScore, note]
       );
     }
     await conn.commit();
