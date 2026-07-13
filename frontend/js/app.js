@@ -1645,6 +1645,8 @@ async function renderClassStats(parts) {
           el('th', { style: { textAlign: 'center' } }, 'Chưa tick'),
           el('th', { style: { textAlign: 'center' } }, 'Tổng buổi'),
           el('th', { style: { textAlign: 'center' } }, 'Tỉ lệ chuyên cần'),
+          el('th', { style: { textAlign: 'center' } }, 'ĐTB bài cũ'),
+          el('th', { style: { textAlign: 'center' } }, 'ĐTB bài tập'),
           el('th', { style: { textAlign: 'center' } }, 'ĐTB (Bài cũ + Bài tập)/2'),
         )
       ));
@@ -1656,13 +1658,18 @@ async function renderClassStats(parts) {
         const bar = el('div', { style: { background: '#e5e7eb', borderRadius: '4px', height: '8px', width: '100%', overflow: 'hidden', marginTop: '4px' } },
           el('div', { style: { background: rateColor, width: s.attendance_rate + '%', height: '100%' } })
         );
-        // Trung binh cong cua 2 cot diem. Chi tinh khi ca 2 deu co gia tri.
+        const avgCell = s.avg_score != null
+          ? el('strong', { style: { color: s.avg_score >= 8 ? '#059669' : s.avg_score >= 5 ? '#d97706' : '#dc2626' } }, s.avg_score + ' đ')
+          : '—';
+        const avgExCell = s.avg_exercise_score != null
+          ? el('strong', { style: { color: s.avg_exercise_score >= 8 ? '#059669' : s.avg_exercise_score >= 5 ? '#d97706' : '#dc2626' } }, s.avg_exercise_score + ' đ')
+          : '—';
         const hasLes = s.avg_score != null;
         const hasEx  = s.avg_exercise_score != null;
         const avgCombined = (hasLes && hasEx)
           ? Math.round(((Number(s.avg_score) + Number(s.avg_exercise_score)) / 2) * 10) / 10
           : null;
-        const avgCell = avgCombined != null
+        const avgCombinedCell = avgCombined != null
           ? el('strong', { style: { color: avgCombined >= 8 ? '#059669' : avgCombined >= 5 ? '#d97706' : '#dc2626' } }, avgCombined + ' đ')
           : '—';
         // Tên HS có thể click để xem chi tiết
@@ -1689,6 +1696,8 @@ async function renderClassStats(parts) {
             bar
           ),
           el('td', { style: { textAlign: 'center' } }, avgCell),
+          el('td', { style: { textAlign: 'center' } }, avgExCell),
+          el('td', { style: { textAlign: 'center' } }, avgCombinedCell),
         ));
       });
       table.appendChild(tbody);
@@ -1788,6 +1797,14 @@ async function renderStudentStats(parts) {
       el('div', { class: 'stat-card' },
         el('div', { class: 'stat-label' }, 'Tỉ lệ chuyên cần'),
         el('div', { class: 'stat-value' }, rate + '%')
+      ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'ĐTB bài cũ'),
+        el('div', { class: 'stat-value' }, avgScore != null ? avgScore + ' đ' : '—')
+      ),
+      el('div', { class: 'stat-card' },
+        el('div', { class: 'stat-label' }, 'ĐTB bài tập'),
+        el('div', { class: 'stat-value' }, avgExScore != null ? avgExScore + ' đ' : '—')
       ),
       el('div', { class: 'stat-card' },
         el('div', { class: 'stat-label' }, 'ĐTB chung (Bài cũ + Bài tập)/2'),
