@@ -124,7 +124,7 @@ router.get('/students/:id/notes', async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.session_id, a.teacher_note, a.lesson_score, a.lesson_grade, a.is_present,
+      `SELECT a.id, a.session_id, a.teacher_note, a.lesson_score, a.is_present,
               s.session_date, s.title AS session_title
          FROM attendances a
          JOIN sessions s ON s.id = a.session_id
@@ -280,7 +280,7 @@ router.get('/students/:id/history', async (req, res) => {
     const [details] = await pool.query(
       `SELECT se.id AS session_id, se.session_date, se.title,
               a.is_present, a.video_lesson_done, a.exercise_online_done,
-              a.lesson_score, a.exercise_score, a.lesson_grade, a.teacher_note
+              a.lesson_score, a.exercise_score, a.teacher_note
         FROM sessions se
         LEFT JOIN attendances a ON a.session_id = se.id AND a.student_id = ?
        WHERE se.class_id = ? AND se.session_date BETWEEN ? AND ?

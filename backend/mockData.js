@@ -57,15 +57,7 @@ const NOTES = [
   'Cần cố gắng thêm.',
 ];
 
-const attendances = []; // {id, session_id, student_id, is_present, video_lesson_done, exercise_online_done, lesson_score, lesson_grade, teacher_note}
-
-function gradeForScore(score) {
-  if (score == null) return null;
-  if (score >= 9) return 'Tốt';
-  if (score >= 7) return 'Khá';
-  if (score >= 5) return 'Trung bình';
-  return 'Yếu';
-}
+const attendances = []; // {id, session_id, student_id, is_present, video_lesson_done, exercise_online_done, lesson_score, exercise_score, teacher_note}
 
 function seedSession(sessionIdx, presentCount, withScores) {
   const sess = sessions[sessionIdx];

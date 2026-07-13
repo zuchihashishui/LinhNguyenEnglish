@@ -84,7 +84,6 @@ CREATE TABLE attendances (
   video_lesson_done    TINYINT(1)    NOT NULL DEFAULT 0 COMMENT 'Đã quay video bài cũ',
   exercise_online_done TINYINT(1)    NOT NULL DEFAULT 0 COMMENT 'Đã làm bài tập online về nhà',
   lesson_score DECIMAL(3,1)    DEFAULT NULL,
-  lesson_grade VARCHAR(20)      DEFAULT NULL,
   exercise_score DECIMAL(3,1)  DEFAULT NULL COMMENT 'Điểm bài tập (1-10, cho phep thap phan 0.5)',
   teacher_note TEXT          NULL,
   created_at   TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
@@ -97,8 +96,7 @@ CREATE TABLE attendances (
     ON DELETE CASCADE,
   CONSTRAINT uq_attendances_session_student UNIQUE (session_id, student_id),
   CONSTRAINT chk_lesson_score    CHECK (lesson_score    IS NULL OR (lesson_score    BETWEEN 1 AND 10)),
-  CONSTRAINT chk_exercise_score  CHECK (exercise_score  IS NULL OR (exercise_score  BETWEEN 1 AND 10)),
-  CONSTRAINT chk_lesson_grade    CHECK (lesson_grade    IS NULL OR lesson_grade IN ('Tốt','Khá','Trung bình','Yếu'))
+  CONSTRAINT chk_exercise_score  CHECK (exercise_score  IS NULL OR (exercise_score  BETWEEN 1 AND 10))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_attendances_session_id ON attendances(session_id);

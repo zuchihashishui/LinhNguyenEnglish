@@ -174,7 +174,6 @@ function saveDraft(sessionId, attendances) {
         exercise_online_done: a.exercise_online_done,
         lesson_score: a.lesson_score,
         exercise_score: a.exercise_score,
-        lesson_grade: a.lesson_grade,
         teacher_note: a.teacher_note,
       }));
     if (items.length === 0) { clearDraft(sessionId); return; }
@@ -978,7 +977,6 @@ async function renderSessionEdit(parts) {
           a.exercise_online_done = d.exercise_online_done;
           a.lesson_score   = d.lesson_score;
           a.exercise_score = d.exercise_score;
-          a.lesson_grade   = d.lesson_grade;
           a.teacher_note   = d.teacher_note;
         });
         draftDirty = false; // đã restore, chưa có thay đổi mới
@@ -1253,7 +1251,6 @@ function paintSessionEditor(editable) {
     { w: '110px', label: 'BT online về nhà' },
     { w: '95px',  label: 'Điểm bài cũ' },
     { w: '95px',  label: 'Điểm bài tập' },
-    { w: '150px', label: 'Xếp loại' },
     { w: null,    label: 'Nhận xét' },
   ];
   ths.forEach(t => {
@@ -1334,37 +1331,14 @@ function paintSessionEditor(editable) {
       scoreInp.step = '0.5';
       scoreInp.value = a.lesson_score != null ? String(a.lesson_score) : '';
       scoreInp.style.cssText = 'width:70px;padding:4px;border:1px solid #d1d5db;border-radius:4px';
-      // Auto cập nhật xếp loại theo điểm
-      function autoGrade(score) {
-        if (score == null || score === '' || isNaN(score)) return null;
-        const n = Number(score);
-        if (n >= 9) return 'Tốt';
-        if (n >= 7) return 'Khá';
-        if (n >= 5) return 'Trung bình';
-        return 'Yếu';
-      }
       scoreInp.addEventListener('input', function () {
         a.lesson_score = scoreInp.value;
-        // Nếu user chưa tự chọn xếp loại (giá trị rỗng hoặc trùng auto), cập nhật theo
-        const g = autoGrade(scoreInp.value);
-        if (g && (!a.lesson_grade || ['Tốt','Khá','Trung bình','Yếu'].indexOf(a.lesson_grade) >= 0)) {
-          a.lesson_grade = g;          // Cập nhật lại select nếu tồn tại
-          const tr2 = scoreInp.closest('tr');
-          if (tr2) {
-            const sel2 = tr2.querySelector('select');
-            if (sel2) {
-              for (const opt of sel2.options) {
-                if (opt.value === g) { opt.selected = true; break; }
-              }
-            }
-          }
-        }
         scheduleDraftSave();
       });
       tdScore.appendChild(scoreInp);
       tr.appendChild(tdScore);
 
-      // Điểm bài tập (exercise_score) - input song song, KHÔNG ảnh hưởng xếp loại
+      // Điểm bài tập (exercise_score)
       const tdExScore = document.createElement('td');
       const exInp = document.createElement('input');
       exInp.type = 'number';
@@ -1377,21 +1351,6 @@ function paintSessionEditor(editable) {
       exInp.addEventListener('input', function () { a.exercise_score = exInp.value; scheduleDraftSave(); });
       tdExScore.appendChild(exInp);
       tr.appendChild(tdExScore);
-
-      // Xếp loại
-      const tdGrade = document.createElement('td');
-      const sel = document.createElement('select');
-      sel.style.cssText = 'padding:4px;border:1px solid #d1d5db;border-radius:4px';
-      [['--', null], ['Tốt', 'Tốt'], ['Khá', 'Khá'], ['Trung bình', 'Trung bình'], ['Yếu', 'Yếu']].forEach(([label, val]) => {
-        const opt = document.createElement('option');
-        opt.value = val || '';
-        opt.textContent = label;
-        if ((a.lesson_grade || '') === (val || '')) opt.selected = true;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener('change', function () { a.lesson_grade = sel.value || null; scheduleDraftSave(); });
-      tdGrade.appendChild(sel);
-      tr.appendChild(tdGrade);
 
       // Nhận xét - textarea rộng và cao hơn để dễ gõ
       const tdNote = document.createElement('td');
@@ -1431,10 +1390,6 @@ function paintSessionEditor(editable) {
       const tdE = document.createElement('td');
       tdE.textContent = a.exercise_score != null ? String(a.exercise_score) : '—';
       tr.appendChild(tdE);
-
-      const tdG = document.createElement('td');
-      tdG.textContent = a.lesson_grade || '—';
-      tr.appendChild(tdG);
 
       const tdN = document.createElement('td');
       tdN.style.whiteSpace = 'pre-wrap';
@@ -1507,7 +1462,6 @@ function paintSessionEditor(editable) {
             ? null : Number(a.lesson_score),
           exercise_score: (a.exercise_score === '' || a.exercise_score == null || a.exercise_score === undefined)
             ? null : Number(a.exercise_score),
-          lesson_grade: a.lesson_grade || null,
           teacher_note: a.teacher_note || null,
         }));
         await api('/sessions/' + s.id + '/attendances', { method: 'POST', body: { items } });
@@ -1691,8 +1645,7 @@ async function renderClassStats(parts) {
           el('th', { style: { textAlign: 'center' } }, 'Chưa tick'),
           el('th', { style: { textAlign: 'center' } }, 'Tổng buổi'),
           el('th', { style: { textAlign: 'center' } }, 'Tỉ lệ chuyên cần'),
-          el('th', { style: { textAlign: 'center' } }, 'ĐTB bài cũ'),
-          el('th', { style: { textAlign: 'center' } }, 'ĐTB bài tập'),
+          el('th', { style: { textAlign: 'center' } }, 'ĐTB (Bài cũ + Bài tập)/2'),
         )
       ));
       const tbody = el('tbody');
@@ -1703,11 +1656,14 @@ async function renderClassStats(parts) {
         const bar = el('div', { style: { background: '#e5e7eb', borderRadius: '4px', height: '8px', width: '100%', overflow: 'hidden', marginTop: '4px' } },
           el('div', { style: { background: rateColor, width: s.attendance_rate + '%', height: '100%' } })
         );
-        const avgCell = s.avg_score != null
-          ? el('strong', { style: { color: s.avg_score >= 8 ? '#059669' : s.avg_score >= 5 ? '#d97706' : '#dc2626' } }, s.avg_score + ' đ')
-          : '—';
-        const avgExCell = s.avg_exercise_score != null
-          ? el('strong', { style: { color: s.avg_exercise_score >= 8 ? '#059669' : s.avg_exercise_score >= 5 ? '#d97706' : '#dc2626' } }, s.avg_exercise_score + ' đ')
+        // Trung binh cong cua 2 cot diem. Chi tinh khi ca 2 deu co gia tri.
+        const hasLes = s.avg_score != null;
+        const hasEx  = s.avg_exercise_score != null;
+        const avgCombined = (hasLes && hasEx)
+          ? Math.round(((Number(s.avg_score) + Number(s.avg_exercise_score)) / 2) * 10) / 10
+          : null;
+        const avgCell = avgCombined != null
+          ? el('strong', { style: { color: avgCombined >= 8 ? '#059669' : avgCombined >= 5 ? '#d97706' : '#dc2626' } }, avgCombined + ' đ')
           : '—';
         // Tên HS có thể click để xem chi tiết
         const nameLink = el('a', {
@@ -1733,7 +1689,6 @@ async function renderClassStats(parts) {
             bar
           ),
           el('td', { style: { textAlign: 'center' } }, avgCell),
-          el('td', { style: { textAlign: 'center' } }, avgExCell),
         ));
       });
       table.appendChild(tbody);
@@ -1835,12 +1790,11 @@ async function renderStudentStats(parts) {
         el('div', { class: 'stat-value' }, rate + '%')
       ),
       el('div', { class: 'stat-card' },
-        el('div', { class: 'stat-label' }, 'ĐTB bài cũ'),
-        el('div', { class: 'stat-value' }, avgScore != null ? avgScore + ' đ' : '—')
-      ),
-      el('div', { class: 'stat-card' },
-        el('div', { class: 'stat-label' }, 'ĐTB bài tập'),
-        el('div', { class: 'stat-value' }, avgExScore != null ? avgExScore + ' đ' : '—')
+        el('div', { class: 'stat-label' }, 'ĐTB chung (Bài cũ + Bài tập)/2'),
+        el('div', { class: 'stat-value' },
+          (avgScore != null && avgExScore != null)
+            ? (Math.round(((Number(avgScore) + Number(avgExScore)) / 2) * 10) / 10) + ' đ'
+            : '—')
       ),
       el('div', { class: 'stat-card' },
         el('div', { class: 'stat-label' }, 'Quay video bài cũ'),
@@ -1880,7 +1834,6 @@ async function renderStudentStats(parts) {
           el('th', { style: { textAlign: 'center' } }, 'BT online'),
           el('th', { style: { textAlign: 'center' } }, 'Điểm bài cũ'),
           el('th', { style: { textAlign: 'center' } }, 'Điểm bài tập'),
-          el('th', { style: { textAlign: 'center' } }, 'Xếp loại'),
           el('th', {}, 'Nhận xét'),
           el('th', { style: { textAlign: 'center' } }, ''),
         )
@@ -1906,7 +1859,6 @@ async function renderStudentStats(parts) {
               : el('span', { class: 'badge badge-gray' }, '—')),
           el('td', { style: { textAlign: 'center' } }, d.lesson_score != null ? String(d.lesson_score) : '—'),
           el('td', { style: { textAlign: 'center' } }, d.exercise_score != null ? String(d.exercise_score) : '—'),
-          el('td', { style: { textAlign: 'center' } }, d.lesson_grade || '—'),
           el('td', { style: { whiteSpace: 'pre-wrap' } }, d.teacher_note || '—'),
           el('td', { style: { textAlign: 'center' } },
             el('button', { class: 'btn btn-sm',
@@ -2063,7 +2015,6 @@ async function renderStudentStats(parts) {
               note: n.teacher_note,
               lesson_score: n.lesson_score,
               exercise_score: n.exercise_score,
-              grade: n.lesson_grade,
               present: n.is_present,
             })),
           }

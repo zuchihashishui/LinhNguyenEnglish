@@ -5,8 +5,6 @@
 const express = require('express');
 const store = require('../mockData');
 
-const ALLOWED_GRADES = ['Tốt', 'Khá', 'Trung bình', 'Yếu'];
-
 // Validate diem (mock): dong bo voi routes/attendances.js
 // Cho phep toi da 1 chu so thap phan (vd 5.5, 8.5), trong [1, 10].
 function validateScore(val, label) {
@@ -147,7 +145,6 @@ apiRouter.get('/students/:id/notes', (req, res) => {
         session_id: a.session_id,
         teacher_note: a.teacher_note,
         lesson_score: a.lesson_score,
-        lesson_grade: a.lesson_grade,
         is_present: a.is_present,
         session_date: s.session_date,
         session_title: s.title,
@@ -232,7 +229,6 @@ apiRouter.post('/sessions/:id/attendances', (req, res) => {
     const idx = store.attendances.findIndex(a => a.session_id === sessionId && a.student_id === it.student_id);
     const score = (it.lesson_score === '' || it.lesson_score == null) ? null : Number(it.lesson_score);
     const exScore = (it.exercise_score === '' || it.exercise_score == null) ? null : Number(it.exercise_score);
-    const grade = it.lesson_grade || null;
     const note  = it.teacher_note || null;
     const data = {
       id: idx >= 0 ? store.attendances[idx].id : store.newId(),
@@ -243,7 +239,6 @@ apiRouter.post('/sessions/:id/attendances', (req, res) => {
       exercise_online_done: it.exercise_online_done ? 1 : 0,
       lesson_score: score,
       exercise_score: exScore,
-      lesson_grade: grade,
       teacher_note: note,
     };
     if (idx >= 0) store.attendances[idx] = data;

@@ -5,8 +5,6 @@ const { requireTeacher } = require('../auth');
 const router = express.Router();
 router.use(requireTeacher);
 
-const ALLOWED_GRADES = ['Tốt', 'Khá', 'Trung bình', 'Yếu'];
-
 // Validate diem: so nguyen hoac 1 chu so thap phan (vd 5.5, 8.5), trong khoang [1, 10].
 function validateScore(val, label) {
   if (val === null || val === undefined || val === '') return null;
@@ -51,9 +49,6 @@ router.post('/sessions/:id/attendances', async (req, res) => {
     if (err1) return res.status(400).json({ error: err1 });
     const err2 = validateScore(it.exercise_score, 'bài tập');
     if (err2) return res.status(400).json({ error: err2 });
-    if (it.lesson_grade && !ALLOWED_GRADES.includes(it.lesson_grade)) {
-      return res.status(400).json({ error: `Xếp loại không hợp lệ: ${it.lesson_grade}` });
-    }
   }
 
   const conn = await pool.getConnection();
@@ -67,23 +62,21 @@ router.post('/sessions/:id/attendances', async (req, res) => {
         ? null : Number(it.lesson_score);
       const exScore = (it.exercise_score === '' || it.exercise_score === undefined || it.exercise_score === null)
         ? null : Number(it.exercise_score);
-      const grade = it.lesson_grade || null;
       const note = it.teacher_note || null;
 
       await conn.query(
         `INSERT INTO attendances (session_id, student_id, is_present, video_lesson_done, exercise_online_done,
-                                  lesson_score, lesson_grade, exercise_score, teacher_note)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  lesson_score, exercise_score, teacher_note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            is_present = VALUES(is_present),
            video_lesson_done = VALUES(video_lesson_done),
            exercise_online_done = VALUES(exercise_online_done),
            lesson_score = VALUES(lesson_score),
-           lesson_grade = VALUES(lesson_grade),
            exercise_score = VALUES(exercise_score),
            teacher_note = VALUES(teacher_note),
            updated_at = CURRENT_TIMESTAMP`,
-        [sessionId, it.student_id, isPresent, videoDone, exOnlineDone, score, grade, exScore, note]
+        [sessionId, it.student_id, isPresent, videoDone, exOnlineDone, score, exScore, note]
       );
     }
     await conn.commit();
