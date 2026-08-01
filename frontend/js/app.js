@@ -2170,7 +2170,8 @@ function renderClassLLMCard(stats, { classId, year, month }) {
       html += '<p>' + (r.result.text || '(lỗi)').replace(/\n/g, '<br>') + '</p>';
     });
     html += '</body></html>';
-    const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+    const encoder = new TextEncoder();
+    const blob = new Blob([encoder.encode('\ufeff' + html)], { type: 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
