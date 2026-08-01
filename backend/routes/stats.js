@@ -51,11 +51,11 @@ router.get('/:id/stats', async (req, res) => {
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
          SUM(CASE WHEN a.video_lesson_done = 1 THEN 1 ELSE 0 END) AS video_done_count,
-         -- Chi tinh bai tap online khi GV tick "co bai tap" trong buoi hoc (has_exercise_online = 1)
-         SUM(CASE WHEN se.has_exercise_online = 1 AND a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
+         -- Dem bai tap online da lam (cot exercise_online_done da co san, khong can cot moi)
+         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score), 2)   AS avg_score,
-         -- Chi tinh diem bai tap online khi buoi do co bai tap
-         ROUND(AVG(CASE WHEN se.has_exercise_online = 1 THEN a.exercise_score END), 2) AS avg_exercise_score
+         -- Diem bai tap online chi tinh khi HS da tick "da lam" (= 1) -> luon co diem
+         ROUND(AVG(CASE WHEN a.exercise_online_done = 1 THEN a.exercise_score END), 2) AS avg_exercise_score
        FROM students s
        LEFT JOIN sessions se
          ON se.class_id = s.class_id
