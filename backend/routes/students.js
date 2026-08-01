@@ -129,6 +129,7 @@ router.get('/students/:id/notes', async (req, res) => {
     // Trước đây JOIN attendances vô tình loại bỏ buổi HS chưa tick → LLM tưởng HS không có buổi nào.
     const [rows] = await pool.query(
       `SELECT s.id AS session_id, s.session_date, s.title AS session_title,
+              s.has_exercise_online,
               a.id AS attendance_id,
               a.teacher_note, a.lesson_score, a.exercise_score, a.is_present,
               a.video_lesson_done, a.exercise_online_done
@@ -171,20 +172,23 @@ router.get('/students/:id/notes', async (req, res) => {
 // GET /api/students/:id/stats
 router.get('/students/:id/stats', async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const [agg] = await pool.query(
       `SELECT
-         COUNT(*) AS total_sessions,
+         COUNT(se.id) AS total_sessions,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
          SUM(CASE WHEN a.video_lesson_done    = 1 THEN 1 ELSE 0 END) AS video_done_count,
-         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
+         -- Chi dem bai tap online khi GV tick co bai tap
+         SUM(CASE WHEN se.has_exercise_online = 1 AND a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
-         ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
-       FROM attendances a
-       WHERE a.student_id = ?`,
-      [req.params.id]
+         -- Chi tinh diem bai tap khi buoi co bai tap
+         ROUND(AVG(CASE WHEN se.has_exercise_online = 1 THEN a.exercise_score END), 2) AS avg_exercise_score
+       FROM sessions se
+       LEFT JOIN attendances a ON a.session_id = se.id AND a.student_id = ?
+       WHERE se.class_id = ? AND se.session_date BETWEEN ? AND ?`,
+      [studentId, sRows[0].class_id, from, to]
     );
-    res.json(rows[0] || {});
+    res.json(agg[0] || {});
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -275,26 +279,28 @@ router.get('/students/:id/history', async (req, res) => {
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
          SUM(CASE WHEN a.video_lesson_done    = 1 THEN 1 ELSE 0 END) AS video_done_count,
-         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
+         SUM(CASE WHEN se.has_exercise_online = 1 AND a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
-         ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
+         ROUND(AVG(CASE WHEN se.has_exercise_online = 1 THEN a.exercise_score END), 2) AS avg_exercise_score
        FROM sessions se
        LEFT JOIN attendances a ON a.session_id = se.id AND a.student_id = ?
        WHERE se.class_id = ? AND se.session_date BETWEEN ? AND ?`,
       [studentId, sRows[0].class_id, from, to]
     );
 
-    // Tổng quan all-time (1 query)
+    // Tổng quan all-time (1 query) - join sessions để lọc theo has_exercise_online
     const [allAgg] = await pool.query(
       `SELECT
          COUNT(*) AS total_sessions,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
          SUM(CASE WHEN a.video_lesson_done    = 1 THEN 1 ELSE 0 END) AS video_done_count,
-         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
+         SUM(CASE WHEN se.has_exercise_online = 1 AND a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score),   2) AS avg_lesson_score,
-         ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
-       FROM attendances a WHERE a.student_id = ?`,
+         ROUND(AVG(CASE WHEN se.has_exercise_online = 1 THEN a.exercise_score END), 2) AS avg_exercise_score
+       FROM attendances a
+       JOIN sessions se ON se.id = a.session_id
+       WHERE a.student_id = ?`,
       [studentId]
     );
 

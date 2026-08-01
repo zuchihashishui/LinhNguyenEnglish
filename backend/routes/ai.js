@@ -75,7 +75,12 @@ router.post('/summarize-notes', async (req, res) => {
       if (n.lesson_score != null) parts.push('Điểm bài cũ: ' + n.lesson_score + '/10');
       if (n.exercise_score != null) parts.push('Điểm bài tập: ' + n.exercise_score + '/10');
       if (n.video_done === 1) parts.push('Quay video bài cũ: ✓');
-      if (n.exercise_online_done === 1) parts.push('Làm bài tập online: ✓');
+      // Buổi có/không có bài tập online (has_exercise_online: 0 = không có bài tập, GV không tick)
+      if (n.has_exercise_online === 0) {
+        parts.push('Không có bài tập online (GV không giao)');
+      } else if (n.exercise_online_done === 1) {
+        parts.push('Làm bài tập online: ✓');
+      }
       if (n.note) parts.push('GV nhận xét: ' + n.note);
       return '- ' + parts.join(' | ');
     }).join('\n');

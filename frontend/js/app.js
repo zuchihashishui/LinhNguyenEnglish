@@ -919,6 +919,7 @@ function renderSessionsTab(main, classId, sessions) {
       session_date: $('#sesDate').value,
       title: $('#sesTitle').value.trim(),
       note: $('#sesNote').value.trim(),
+      has_exercise_online: $('#sesHasExCreate').checked ? 1 : 0,
     };
     if (!body.session_date) return;
     try {
@@ -940,6 +941,15 @@ function renderSessionsTab(main, classId, sessions) {
     el('div', { class: 'form-row', style: { marginTop: '10px' } },
       el('label', {}, 'Ghi chú chung'),
       el('textarea', { id: 'sesNote', rows: '2' })
+    ),
+    el('div', { class: 'form-row', style: { marginTop: '10px' } },
+      el('label', { for: 'sesHasExCreate', style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: '500' } },
+        el('input', { type: 'checkbox', id: 'sesHasExCreate', checked: true }),
+        '📝 Buổi này có bài tập online về nhà'
+      ),
+      el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } },
+        '💡 Bỏ tick nếu hôm đó không có bài tập → không tính vào thống kê tháng'
+      )
     ),
     el('div', { style: { marginTop: '12px' } },
       el('button', { class: 'btn', type: 'submit' }, 'Tạo buổi học')
@@ -2078,7 +2088,9 @@ function renderClassLLMCard(stats, { classId, year, month }) {
         background: '#fafafa', padding: '10px 12px', borderRadius: '4px',
       }
     });
-    body.textContent = result.text || ('(Lỗi: ' + (result.error || 'unknown') + ')');
+    const commentRaw = result.text || ('(Lỗi: ' + (result.error || 'unknown') + ')');
+    // Phân biệt vai trò: "Cô giáo" là người nhận xét (tránh nhầm với mẹ nhận xét cho con)
+    body.textContent = '🧑‍🏫 Cô giáo nhận xét:\n\n' + commentRaw;
     card.appendChild(body);
 
     if (result.model) {
@@ -2126,7 +2138,8 @@ function renderClassLLMCard(stats, { classId, year, month }) {
         ),
         el('td', { style: { padding: '10px 12px', fontSize: '12px', color: '#374151' } }, mini),
         el('td', { style: { padding: '10px 12px', whiteSpace: 'pre-wrap', maxWidth: '500px', fontSize: '13px', color: '#111827', lineHeight: '1.6' } },
-          r.result.text || el('span', { style: { color: '#dc2626' } }, '❌ ' + (r.result.error || 'Lỗi'))),
+          el('div', { style: { fontWeight: '700', color: '#1e3a8a', marginBottom: '4px', fontSize: '12px' } }, '🧑‍🏫 Cô giáo nhận xét:'),
+          r.result.text ? el('div', {}, r.result.text) : el('span', { style: { color: '#dc2626' } }, '❌ ' + (r.result.error || 'Lỗi'))),
       );
       tbody.appendChild(row);
     });
@@ -2155,7 +2168,7 @@ function renderClassLLMCard(stats, { classId, year, month }) {
   btnCopyAll.addEventListener('click', () => {
     if (lastResults.length === 0) { toast('Chưa có kết quả để copy', 'error'); return; }
     const text = lastResults.map((r, i) =>
-      (i + 1) + '. ' + r.student.full_name + ':\n' + (r.result.text || '(lỗi)')
+      (i + 1) + '. ' + r.student.full_name + ':\n' + '🧑‍🏫 Cô giáo nhận xét: ' + (r.result.text || '(lỗi)')
     ).join('\n\n---\n\n');
     navigator.clipboard.writeText(text).then(() => toast('Đã copy ' + lastResults.length + ' nhận xét', 'success'));
   });
@@ -2167,6 +2180,7 @@ function renderClassLLMCard(stats, { classId, year, month }) {
     html += '<h2>Nhận xét tháng ' + month + '/' + year + ' - ' + (stats.class?.name || '') + '</h2>';
     lastResults.forEach((r, i) => {
       html += '<h3>' + (i + 1) + '. ' + r.student.full_name + '</h3>';
+      html += '<p><b>🧑‍🏫 Cô giáo nhận xét:</b></p>';
       html += '<p>' + (r.result.text || '(lỗi)').replace(/\n/g, '<br>') + '</p>';
     });
     html += '</body></html>';
@@ -2236,6 +2250,7 @@ function renderClassLLMCard(stats, { classId, year, month }) {
             present: n.is_present,
             video_done: n.video_lesson_done,
             exercise_online_done: n.exercise_online_done,
+            has_exercise_online: n.has_exercise_online, // 0 = buổi đó không có bài tập online (GV không giao)
           })),
         };
         console.log('[LLM] →', stu.full_name, payload);
@@ -2827,6 +2842,16 @@ function openEditSessionDialog(s, onDone) {
   m.body.appendChild(el('div', { class: 'form-row' },
     el('label', {}, 'Ghi chú'), noteTa));
 
+  // Checkbox "Co bai tap online" - chi tinh diem khi tick
+  const hasExCb = el('input', { type: 'checkbox', id: 'sesHasEx' });
+  hasExCb.checked = s.has_exercise_online === undefined ? true : !!s.has_exercise_online;
+  m.body.appendChild(el('div', { class: 'form-row' },
+    el('label', { for: 'sesHasEx', style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } },
+      hasExCb,
+      el('span', {}, '📝 Buổi này có bài tập online về nhà'))));
+  m.body.appendChild(el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '-8px', marginBottom: '10px' } },
+    '💡 Bỏ tick nếu hôm đó không có bài tập online → không tính vào thống kê tháng'));
+
   const btnCancel = el('button', { class: 'btn btn-secondary', type: 'button', onClick: m.close }, 'Huỷ');
   const btnSave = el('button', { class: 'btn', type: 'button' }, '💾 Lưu');
   btnSave.addEventListener('click', async function () {
@@ -2839,6 +2864,7 @@ function openEditSessionDialog(s, onDone) {
           session_date: dateInp.value,
           title: titleInp.value.trim(),
           note: noteTa.value,
+          has_exercise_online: hasExCb.checked ? 1 : 0,
         }
       });
       toast('Đã cập nhật buổi học', 'success');

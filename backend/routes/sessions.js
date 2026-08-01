@@ -23,7 +23,7 @@ router.get('/classes/:id/sessions', async (req, res) => {
   }
   try {
     const [rows] = await pool.query(
-      'SELECT id, class_id, session_date, title, note, created_at \
+      'SELECT id, class_id, session_date, title, note, has_exercise_online, created_at \
        FROM sessions WHERE class_id = ? ORDER BY session_date DESC, id DESC',
       [req.params.id]
     );
@@ -38,14 +38,16 @@ router.post('/classes/:id/sessions', async (req, res) => {
   if (!await canAccessClass(req, req.params.id)) {
     return res.status(403).json({ error: 'Bạn không phụ trách lớp này' });
   }
-  const { session_date, title, note } = req.body || {};
+  const { session_date, title, note, has_exercise_online } = req.body || {};
   if (!session_date) {
     return res.status(400).json({ error: 'Ngày học không được để trống' });
   }
+  // Mac dinh co bai tap online (1). Bo tick = 0 (GV chu dong tat).
+  const hasEx = has_exercise_online === undefined ? 1 : (has_exercise_online ? 1 : 0);
   try {
     const [result] = await pool.query(
-      'INSERT INTO sessions (class_id, session_date, title, note) VALUES (?, ?, ?, ?)',
-      [req.params.id, session_date, title || null, note || null]
+      'INSERT INTO sessions (class_id, session_date, title, note, has_exercise_online) VALUES (?, ?, ?, ?, ?)',
+      [req.params.id, session_date, title || null, note || null, hasEx]
     );
     res.status(201).json({
       id: result.insertId,
@@ -53,6 +55,7 @@ router.post('/classes/:id/sessions', async (req, res) => {
       session_date,
       title: title || null,
       note: note || null,
+      has_exercise_online: hasEx,
     });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') {
@@ -66,7 +69,7 @@ router.post('/classes/:id/sessions', async (req, res) => {
 router.get('/sessions/:id', async (req, res) => {
   try {
     const [sessionRows] = await pool.query(
-      'SELECT id, class_id, session_date, title, note, created_at FROM sessions WHERE id = ?',
+      'SELECT id, class_id, session_date, title, note, has_exercise_online, created_at FROM sessions WHERE id = ?',
       [req.params.id]
     );
     if (sessionRows.length === 0) {
@@ -100,7 +103,7 @@ router.put('/sessions/:id', async (req, res) => {
     if (!await canAccessClass(req, rows[0].class_id)) {
       return res.status(403).json({ error: 'Bạn không phụ trách lớp này' });
     }
-    const { session_date, title, note } = req.body || {};
+    const { session_date, title, note, has_exercise_online } = req.body || {};
     const fields = [];
     const params = [];
     if (session_date !== undefined) {
@@ -118,12 +121,16 @@ router.put('/sessions/:id', async (req, res) => {
       fields.push('note = ?');
       params.push(note ? String(note) : null);
     }
+    if (has_exercise_online !== undefined) {
+      fields.push('has_exercise_online = ?');
+      params.push(has_exercise_online ? 1 : 0);
+    }
     if (fields.length === 0) return res.status(400).json({ error: 'Không có trường nào để cập nhật' });
     params.push(req.params.id);
     await pool.query('UPDATE sessions SET ' + fields.join(', ') + ' WHERE id = ?', params);
 
     const [updated] = await pool.query(
-      'SELECT id, class_id, session_date, title, note, created_at FROM sessions WHERE id = ?',
+      'SELECT id, class_id, session_date, title, note, has_exercise_online, created_at FROM sessions WHERE id = ?',
       [req.params.id]
     );
     res.json(updated[0]);
