@@ -92,6 +92,87 @@ async function api(path, options = {}) {
   return data;
 }
 
+// =====================================================
+// LLM helpers (dùng cho cả trang HS cũ và trang Thống kê lớp)
+// =====================================================
+const LLM_LS_KEY = 'llm_settings_v1';
+function loadLLMSettings() {
+  try { return JSON.parse(localStorage.getItem(LLM_LS_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveLLMSettings(cfg) {
+  localStorage.setItem(LLM_LS_KEY, JSON.stringify(cfg));
+}
+
+// Chuẩn hoá base URL giống backend
+function normalizeLLMBase(base) {
+  let b = (base || 'https://api.openai.com').trim();
+  b = b.replace(/\/+$/, '');
+  if (!/\/v\d+/.test(b)) b = b + '/v1';
+  return b;
+}
+
+// Phát hiện xu hướng điểm: so sánh TB nửa đầu tháng vs nửa cuối tháng
+function trendOf(arr, key) {
+  if (!arr || arr.length < 4) return null;
+  const half = Math.floor(arr.length / 2);
+  const first = arr.slice(0, half);
+  const last  = arr.slice(arr.length - half);
+  const avgFirst = first.reduce((s, x) => s + Number(x[key]), 0) / first.length;
+  const avgLast  = last.reduce((s, x) => s + Number(x[key]), 0) / last.length;
+  const diff = avgLast - avgFirst;
+  if (Math.abs(diff) < 0.5) return 'flat';
+  return diff > 0 ? 'up' : 'down';
+}
+
+// Tổng hợp monthly_summary + trend + low_score_sessions để gửi cho LLM
+function buildMonthlySummaryForLLM(studentStats, notes) {
+  const present = Number(studentStats.present_count || 0);
+  const absent  = Number(studentStats.absent_count || 0);
+  const unmarked = Number(studentStats.unmarked_count || 0);
+  const total    = Number(studentStats.total_sessions || studentStats.total_marked || (present + absent + unmarked));
+  const summary = {
+    total_sessions: total,
+    present,
+    absent,
+    unmarked,
+    avg_lesson_score: studentStats.avg_lesson_score ?? studentStats.avg_score ?? null,
+    avg_exercise_score: studentStats.avg_exercise_score ?? null,
+    video_done: Number(studentStats.video_done_count || 0),
+    exercise_online_done: Number(studentStats.exercise_done_count || 0),
+  };
+  const sessLes = (notes || []).map(n => ({ ls: n.lesson_score })).filter(x => x.ls != null);
+  const sessEx  = (notes || []).map(n => ({ es: n.exercise_score })).filter(x => x.es != null);
+  summary.lesson_trend   = trendOf(sessLes, 'ls');
+  summary.exercise_trend = trendOf(sessEx,  'es');
+  const low = [];
+  (notes || []).forEach((n, i) => {
+    const lowLes = n.lesson_score != null && Number(n.lesson_score) <= 5;
+    const lowEx  = n.exercise_score != null && Number(n.exercise_score) <= 5;
+    if (lowLes || lowEx) {
+      low.push('Buổi ' + (i + 1) + ' (' + n.session_date + '): bài cũ=' +
+        (n.lesson_score ?? '—') + ', bài tập=' + (n.exercise_score ?? '—'));
+    }
+  });
+  summary.low_score_sessions = low;
+  return summary;
+}
+
+// Test kết nối LLM (gọi GET /models)
+async function testLLMConnection(apiKey, baseUrl) {
+  const base = normalizeLLMBase(baseUrl);
+  const res = await fetch(base + '/models', {
+    headers: { 'Authorization': 'Bearer ' + apiKey },
+  });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = null; }
+  if (res.ok) {
+    const ids = data?.data && Array.isArray(data.data) ? data.data.map(m => m.id) : [];
+    return { ok: true, message: 'OK. Có ' + ids.length + ' models khả dụng.' + (ids[0] ? ' Ví dụ: ' + ids.slice(0, 3).join(', ') : '') };
+  }
+  return { ok: false, message: (data?.error?.message || data?.error || ('HTTP ' + res.status)) };
+}
+
 // ----- Utilities -----
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -1624,7 +1705,7 @@ async function renderClassStats(parts) {
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Số buổi học trong tháng'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#4f46e5' } }, String(stats.total_sessions))),
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Tổng lượt có mặt'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#059669' } }, String(totalPresent))),
       el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Tổng lượt vắng'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#dc2626' } }, String(totalAbsent))),
-      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Sĩ số lớp'), el('div', { style: { fontSize: '28px', fontWeight: '700' } }, String(stats.students.length))),
+      el('div', {}, el('div', { style: { fontSize: '13px', color: '#6b7280' } }, 'Sĩ số lớp'), el('div', { style: { fontSize: '28px', fontWeight: '700', color: '#d97706' } }, String(stats.students.length))),
     );
     main.appendChild(overview);
 
@@ -1644,6 +1725,7 @@ async function renderClassStats(parts) {
           el('th', { style: { textAlign: 'center' } }, 'Vắng'),
           el('th', { style: { textAlign: 'center' } }, 'Chưa tick'),
           el('th', { style: { textAlign: 'center' } }, 'Tổng buổi'),
+          el('th', { style: { textAlign: 'center' } }, 'Quay video bài cũ'),
           el('th', { style: { textAlign: 'center' } }, 'Tỉ lệ chuyên cần'),
           el('th', { style: { textAlign: 'center' } }, 'ĐTB bài cũ'),
           el('th', { style: { textAlign: 'center' } }, 'ĐTB bài tập'),
@@ -1683,7 +1765,7 @@ async function renderClassStats(parts) {
             nameLink,
             el('div', { style: { fontSize: '12px', color: '#6b7280' } }, s.student_code)
           ),
-          el('td', { style: { textAlign: 'center', color: '#059669', fontWeight: '600' } }, String(s.present_count)),
+          el('td', { style: { textAlign: 'center' } }, String(s.present_count)),
           el('td', { style: { textAlign: 'center', color: s.absent_count > 0 ? '#dc2626' : '#6b7280', fontWeight: '600' } }, String(s.absent_count)),
           el('td', { style: { textAlign: 'center', color: s.unmarked_count > 0 ? '#d97706' : '#6b7280', fontWeight: '600' } },
             s.unmarked_count > 0
@@ -1691,6 +1773,7 @@ async function renderClassStats(parts) {
               : String(s.unmarked_count)
           ),
           el('td', { style: { textAlign: 'center' } }, String(s.total_marked)),
+          el('td', { style: { textAlign: 'center', color: '#059669', fontWeight: '600' } }, String(s.video_done_count) + '/' + String(s.total_marked)),
           el('td', { style: { textAlign: 'center' } },
             el('span', { style: { display: 'inline-block', minWidth: '52px', padding: '2px 8px', background: rateBg, color: rateColor, borderRadius: '12px', fontWeight: '600', fontSize: '13px' } }, s.attendance_rate + '%'),
             bar
@@ -1706,9 +1789,497 @@ async function renderClassStats(parts) {
       card.appendChild(wrapS);
     }
     main.appendChild(card);
+
+    // ============= 🤖 Tổng hợp nhận xét tháng bằng AI (cả lớp) =============
+    main.appendChild(renderClassLLMCard(stats, { classId, year, month }));
   } catch (err) {
     main.innerHTML = `<div class="card empty">Lỗi: ${err.message}</div>`;
   }
+}
+
+// =====================================================
+// 🤖 Card tổng hợp nhận xét tháng bằng AI cho cả lớp
+// (gắn vào trang Thống kê lớp — gọi 1 lần cho nhiều HS)
+// =====================================================
+function renderClassLLMCard(stats, { classId, year, month }) {
+  const saved = loadLLMSettings();
+  const root = el('div', { class: 'card', style: { background: 'var(--warning-bg)', borderLeft: '4px solid var(--warning)' } });
+
+  root.appendChild(el('h3', {}, '🤖 Tổng hợp nhận xét tháng bằng AI'));
+  root.appendChild(el('p', { class: 'muted text-sm' },
+    'Tạo nhận xét tháng ' + month + '/' + year + ' cho từng học sinh bằng AI. ' +
+    'Chọn học sinh cần tổng hợp → bấm 1 lần. Hệ thống phát hiện cấp học (cấp 1 / lớp 1-5) để chọn giọng văn phù hợp. ' +
+    'API key chỉ lưu trong trình duyệt, không gửi lên server.'));
+
+  // ---- Form cấu hình LLM ----
+  const form = el('div', { class: 'form-grid' });
+  const keyInp = el('input', { type: 'password', id: 'aiKey', placeholder: 'sk-...', value: saved.api_key || '' });
+  const baseInp = el('input', { type: 'text', id: 'aiBase', placeholder: 'https://api.openai.com', value: saved.base_url || 'https://api.openai.com' });
+  const modelInp = el('input', { type: 'text', id: 'aiModel', placeholder: 'gpt-4o-mini', value: saved.model || 'gpt-4o-mini' });
+  form.appendChild(el('div', { class: 'form-row' }, el('label', {}, '🔑 API key (lưu local)'), keyInp));
+  form.appendChild(el('div', { class: 'form-row' }, el('label', {}, '🌐 Base URL'), baseInp));
+  form.appendChild(el('div', { class: 'form-row' }, el('label', {}, '🧠 Model'), modelInp));
+  root.appendChild(form);
+
+  // Hàng nút lưu + test + trạng thái
+  const statusSpan = el('span', { id: 'aiTestStatus', style: { color: '#6b7280', fontSize: '13px' } }, '(chưa test kết nối)');
+  const btnRow1 = el('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' } });
+  const btnSave = el('button', { class: 'btn btn-secondary', type: 'button' }, '💾 Lưu cấu hình');
+  const btnTest = el('button', { class: 'btn btn-secondary', type: 'button' }, '⚙ Test kết nối');
+  btnRow1.appendChild(btnSave);
+  btnRow1.appendChild(btnTest);
+  btnRow1.appendChild(statusSpan);
+  root.appendChild(btnRow1);
+
+  btnSave.addEventListener('click', () => {
+    saveLLMSettings({
+      api_key: keyInp.value.trim(),
+      base_url: baseInp.value.trim(),
+      model: modelInp.value.trim(),
+      year: year,
+    });
+    toast('Đã lưu cấu hình LLM vào trình duyệt', 'success');
+  });
+
+  btnTest.addEventListener('click', async () => {
+    const apiKey = keyInp.value.trim();
+    if (!apiKey) { toast('Vui lòng nhập API key trước', 'error'); return; }
+    btnTest.disabled = true;
+    const oldText = btnTest.textContent;
+    btnTest.textContent = '⏳ Đang test...';
+    statusSpan.textContent = '⏳ Đang kiểm tra...';
+    statusSpan.style.color = '#6b7280';
+    try {
+      const r = await testLLMConnection(apiKey, baseInp.value.trim());
+      if (r.ok) {
+        statusSpan.textContent = '✅ ' + r.message;
+        statusSpan.style.color = '#059669';
+        saveLLMSettings({ api_key: apiKey, base_url: baseInp.value.trim(), model: modelInp.value.trim(), year });
+      } else {
+        statusSpan.textContent = '❌ ' + r.message;
+        statusSpan.style.color = '#dc2626';
+      }
+    } catch (err) {
+      statusSpan.textContent = '❌ ' + err.message;
+      statusSpan.style.color = '#dc2626';
+    } finally {
+      btnTest.disabled = false;
+      btnTest.textContent = oldText;
+    }
+  });
+
+  // ---- Chọn học sinh ----
+  const students = stats.students || [];
+  const selectable = students.filter(s => (Number(s.present_count) + Number(s.absent_count) + Number(s.unmarked_count)) > 0);
+
+  const picker = el('div', {
+    style: {
+      marginTop: '16px',
+      background: '#fffbeb',                  // nền vàng nhạt cho nổi bật
+      padding: '14px',
+      borderRadius: '8px',
+      border: '2px solid #fbbf24',            // viền vàng cam đậm
+    }
+  });
+  picker.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } },
+    el('strong', { style: { fontSize: '15px', color: '#78350f' } },
+      'Chọn học sinh (' + selectable.length + ' có dữ liệu tháng này)'
+    ),
+    el('label', {
+      style: {
+        fontSize: '14px', fontWeight: '700', cursor: 'pointer',
+        background: '#1e3a8a', color: '#ffffff',                 // nền xanh đậm + chữ trắng
+        padding: '6px 12px', borderRadius: '6px',
+        border: '1px solid #1e3a8a',
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
+      }
+    },
+      el('input', { type: 'checkbox', id: 'aiSelectAll', checked: 'checked',
+        style: { cursor: 'pointer', accentColor: '#fbbf24' },
+        onChange: (e) => {
+          $$('#aiStudentList input[type=checkbox]').forEach(cb => cb.checked = e.target.checked);
+          updateSelCount();
+        }
+      }),
+      el('span', { style: { color: '#ffffff' } }, 'Chọn tất cả')
+    )
+  ));
+
+  const list = el('div', { id: 'aiStudentList',
+    style: {
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+      gap: '6px 12px', maxHeight: '240px', overflowY: 'auto', padding: '8px',
+      background: '#fff', borderRadius: '6px', border: '1px solid #fde68a',
+    }
+  });
+  selectable.forEach(s => {
+    const cb = el('input', { type: 'checkbox', value: s.student_id,
+      'data-name': s.full_name,
+      checked: 'checked',
+      onChange: updateSelCount
+    });
+    // Đảm bảo property .checked = true (không chỉ attribute)
+    cb.checked = true;
+    list.appendChild(el('label', {
+      style: {
+        display: 'flex', gap: '6px', alignItems: 'center',
+        fontSize: '14px', cursor: 'pointer',
+        padding: '6px 8px', borderRadius: '6px',
+        background: '#f8fafc', border: '1px solid #e5e7eb',
+      },
+      onMouseEnter: (e) => { e.currentTarget.style.background = '#dbeafe'; e.currentTarget.style.borderColor = '#93c5fd'; },
+      onMouseLeave: (e) => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#e5e7eb'; },
+    },
+      cb,
+      el('span', { style: { fontWeight: '700', color: '#1e3a8a', fontSize: '14px' } }, s.full_name),
+      el('span', { style: { fontSize: '11px', color: '#6b7280', marginLeft: 'auto' } }, 'ĐTB ' + (s.avg_score ?? '—'))
+    ));
+  });
+  picker.appendChild(list);
+  const selCount = el('div', { id: 'aiSelCount',
+    style: { marginTop: '10px', fontSize: '13px', color: '#78350f', fontWeight: '600' }
+  });
+  // Set trực tiếp text mặc định (không qua DOM query để tránh cache state cũ)
+  selCount.textContent = 'Đã chọn ' + selectable.length + '/' + selectable.length + ' học sinh';
+  picker.appendChild(selCount);
+  root.appendChild(picker);
+
+  // ---- Nút chạy + progress ----
+  const btnRun = el('button', { class: 'btn', type: 'button', style: { marginTop: '12px' } }, '✨ Tổng hợp cho ' + selectable.length + ' học sinh');
+  // Mặc định enable (vì đã tick sẵn tất cả HS)
+  btnRun.disabled = (selectable.length === 0);
+  root.appendChild(btnRun);
+
+  function updateSelCount() {
+    const boxes = $$('#aiStudentList input[type=checkbox]');
+    const checked = boxes.filter(cb => cb.checked).length;
+    selCount.textContent = 'Đã chọn ' + checked + '/' + selectable.length + ' học sinh';
+    btnRun.textContent = '✨ Tổng hợp cho ' + checked + ' học sinh';
+    btnRun.disabled = checked === 0;
+    // Đồng bộ trạng thái checkbox "Chọn tất cả"
+    const allBox = $('#aiSelectAll');
+    if (allBox) allBox.checked = (checked === boxes.length && boxes.length > 0);
+  }
+
+  const progressWrap = el('div', { style: { marginTop: '8px', fontSize: '13px' } });
+  const progressText = el('div', { id: 'aiProgressText', style: { color: '#6b7280' } }, '');
+  const progressBar = el('div', { style: { background: '#e5e7eb', borderRadius: '4px', height: '8px', marginTop: '4px', overflow: 'hidden' } },
+    el('div', { id: 'aiProgressBar', style: { background: '#4f46e5', height: '100%', width: '0%', transition: 'width 0.2s' } })
+  );
+  const errorBox = el('div', { id: 'aiErrorBox', style: { display: 'none', marginTop: '8px', padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', fontSize: '13px', color: '#991b1b' } });
+  progressWrap.appendChild(progressText);
+  progressWrap.appendChild(progressBar);
+  progressWrap.appendChild(errorBox);
+  root.appendChild(progressWrap);
+
+  // ---- Tabs kết quả ----
+  const tabsBar = el('div', { style: { display: 'flex', gap: '4px', marginTop: '16px', borderBottom: '2px solid #e5e7eb' } });
+  const gridTabBtn = el('button', { class: 'btn-tab active', type: 'button', style: tabStyle(true) }, '🔲 Lưới');
+  const tableTabBtn = el('button', { class: 'btn-tab', type: 'button', style: tabStyle(false) }, '📋 Bảng');
+  tabsBar.appendChild(gridTabBtn);
+  tabsBar.appendChild(tableTabBtn);
+  root.appendChild(tabsBar);
+
+  const gridPane = el('div', { id: 'aiResultGrid', style: { marginTop: '12px' } });
+  const tablePane = el('div', { id: 'aiResultTable', style: { marginTop: '12px', display: 'none' } });
+  root.appendChild(gridPane);
+  root.appendChild(tablePane);
+
+  function tabStyle(active) {
+    return {
+      padding: '8px 16px',
+      border: 'none',
+      background: active ? '#fff' : 'transparent',
+      borderBottom: active ? '2px solid #4f46e5' : '2px solid transparent',
+      marginBottom: '-2px',
+      cursor: 'pointer',
+      fontWeight: active ? '600' : '400',
+      color: active ? '#4f46e5' : '#6b7280',
+    };
+  }
+  gridTabBtn.addEventListener('click', () => {
+    gridTabBtn.style.cssText = tabStyle(true).cssText || '';
+    Object.assign(gridTabBtn.style, tabStyle(true));
+    Object.assign(tableTabBtn.style, tabStyle(false));
+    gridPane.style.display = '';
+    tablePane.style.display = 'none';
+  });
+  tableTabBtn.addEventListener('click', () => {
+    Object.assign(gridTabBtn.style, tabStyle(false));
+    Object.assign(tableTabBtn.style, tabStyle(true));
+    gridPane.style.display = 'none';
+    tablePane.style.display = '';
+  });
+  // Init tab styles
+  Object.assign(gridTabBtn.style, tabStyle(true));
+  Object.assign(tableTabBtn.style, tabStyle(false));
+
+  // ---- Thanh tác vụ dưới cùng ----
+  const actionsBar = el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+  const btnCopyAll = el('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, '📋 Copy tất cả');
+  const btnExport = el('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, '📄 Tải file Word (.doc)');
+  actionsBar.appendChild(btnCopyAll);
+  actionsBar.appendChild(btnExport);
+  root.appendChild(actionsBar);
+
+  // ---- Logic chính ----
+  const gradeLevel = stats.class?.grade_level || 3;
+
+  function borderColorFor(avg) {
+    if (avg == null) return '#9ca3af';
+    if (avg >= 8) return '#059669';
+    if (avg >= 6) return '#d97706';
+    return '#dc2626';
+  }
+
+  function makeCard(stu, result) {
+    const avg = stu.avg_score;
+    const card = el('div', {
+      class: 'card',
+      style: {
+        background: '#fff',
+        borderLeft: '4px solid ' + borderColorFor(avg),
+        border: '1px solid #e5e7eb',
+        borderLeftWidth: '6px',
+        padding: '14px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        borderRadius: '6px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+      }
+    });
+    const title = el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' } },
+      el('div', {},
+        el('a', {
+          href: '#student-stats/' + stu.student_id,
+          style: {
+            color: '#1e3a8a', textDecoration: 'none',
+            fontWeight: '700', fontSize: '17px',         // tên HS to + đậm
+            display: 'block', marginBottom: '4px',
+          }
+        }, '📝 ' + stu.full_name),
+        el('div', { style: { fontSize: '12px', color: '#4b5563', fontWeight: '500' } },
+          'Lớp ' + (stats.class?.grade_level ?? '?') +
+          ' • ĐTB bài cũ: ' + (avg ?? '—') +
+          ' • Chuyên cần: ' + stu.attendance_rate + '%'
+        )
+      ),
+      el('button', { class: 'btn btn-sm btn-secondary', type: 'button',
+        onClick: () => navigator.clipboard.writeText(result.text || '').then(() => toast('Đã copy nhận xét', 'success'))
+      }, '📋')
+    );
+    card.appendChild(title);
+
+    const body = el('div', {
+      style: {
+        whiteSpace: 'pre-wrap', lineHeight: '1.7',
+        fontSize: '14px', color: '#111827',
+        background: '#fafafa', padding: '10px 12px', borderRadius: '4px',
+      }
+    });
+    body.textContent = result.text || ('(Lỗi: ' + (result.error || 'unknown') + ')');
+    card.appendChild(body);
+
+    if (result.model) {
+      card.appendChild(el('div', { style: { fontSize: '11px', color: '#6b7280' } },
+        'Model: ' + result.model + (result.tokens ? ' • ' + result.tokens + ' tokens' : '')));
+    }
+    return card;
+  }
+
+  function makeTable(records) {
+    const table = el('table', {
+      class: 'stats-table',
+      style: {
+        width: '100%', borderCollapse: 'collapse',
+        background: '#fff', borderRadius: '6px', overflow: 'hidden',
+        border: '1px solid #e5e7eb',
+      }
+    });
+    table.appendChild(el('thead', { style: { background: '#1e3a8a', color: '#fff' } },
+      el('tr', { style: { textAlign: 'left' } },
+        el('th', { style: { padding: '10px 12px', fontWeight: '700', fontSize: '13px', width: '40px' } }, '#'),
+        el('th', { style: { padding: '10px 12px', fontWeight: '700', fontSize: '13px' } }, 'Họ tên'),
+        el('th', { style: { padding: '10px 12px', fontWeight: '700', fontSize: '13px' } }, 'Mini stats'),
+        el('th', { style: { padding: '10px 12px', fontWeight: '700', fontSize: '13px' } }, 'Nhận xét'),
+      )
+    ));
+    const tbody = el('tbody');
+    records.forEach((r, i) => {
+      const stu = r.student;
+      const mini = [
+        'Chuyên cần ' + stu.attendance_rate + '%',
+        'ĐTB bài cũ ' + (stu.avg_score ?? '—'),
+        stu.video_done_count + '/' + (stu.present_count + stu.absent_count) + ' video',
+      ].join(' • ');
+      const row = el('tr', { style: { borderTop: '1px solid #e5e7eb' } },
+        el('td', { style: { padding: '10px 12px', color: '#6b7280', fontWeight: '600' } }, String(i + 1)),
+        el('td', { style: { padding: '10px 12px' } },
+          el('a', {
+            href: '#student-stats/' + stu.student_id,
+            style: {
+              color: '#1e3a8a', textDecoration: 'none',
+              fontWeight: '700', fontSize: '14px',     // tên HS nổi bật
+            }
+          }, stu.full_name)
+        ),
+        el('td', { style: { padding: '10px 12px', fontSize: '12px', color: '#374151' } }, mini),
+        el('td', { style: { padding: '10px 12px', whiteSpace: 'pre-wrap', maxWidth: '500px', fontSize: '13px', color: '#111827', lineHeight: '1.6' } },
+          r.result.text || el('span', { style: { color: '#dc2626' } }, '❌ ' + (r.result.error || 'Lỗi'))),
+      );
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    const wrap = el('div', { class: 'table-wrapper', style: { overflowX: 'auto' } });
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  let lastResults = []; // { student, result }
+
+  function renderResults(records) {
+    gridPane.innerHTML = '';
+    tablePane.innerHTML = '';
+    if (records.length === 0) {
+      gridPane.appendChild(el('div', { class: 'empty', style: { background: '#fef3c7', color: '#92400e', padding: '12px', borderRadius: '8px' } },
+        '⚠ Không có kết quả nào. Hãy bấm "✨ Tổng hợp" trước.'));
+      return;
+    }
+    const grid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' } });
+    records.forEach(r => grid.appendChild(makeCard(r.student, r.result)));
+    gridPane.appendChild(grid);
+    tablePane.appendChild(makeTable(records));
+  }
+
+  btnCopyAll.addEventListener('click', () => {
+    if (lastResults.length === 0) { toast('Chưa có kết quả để copy', 'error'); return; }
+    const text = lastResults.map((r, i) =>
+      (i + 1) + '. ' + r.student.full_name + ':\n' + (r.result.text || '(lỗi)')
+    ).join('\n\n---\n\n');
+    navigator.clipboard.writeText(text).then(() => toast('Đã copy ' + lastResults.length + ' nhận xét', 'success'));
+  });
+
+  btnExport.addEventListener('click', () => {
+    if (lastResults.length === 0) { toast('Chưa có kết quả để xuất', 'error'); return; }
+    // Xuất file HTML mở bằng Word (.doc) - đơn giản, không cần thư viện
+    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>Nhận xét</title></head><body>';
+    html += '<h2>Nhận xét tháng ' + month + '/' + year + ' - ' + (stats.class?.name || '') + '</h2>';
+    lastResults.forEach((r, i) => {
+      html += '<h3>' + (i + 1) + '. ' + r.student.full_name + '</h3>';
+      html += '<p>' + (r.result.text || '(lỗi)').replace(/\n/g, '<br>') + '</p>';
+    });
+    html += '</body></html>';
+    const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'nhan-xet-thang-' + month + '-' + year + '.doc';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  btnRun.addEventListener('click', async () => {
+    const apiKey = keyInp.value.trim();
+    const baseUrl = baseInp.value.trim();
+    const model = modelInp.value.trim();
+    if (!apiKey) { toast('Vui lòng nhập API key', 'error'); return; }
+    saveLLMSettings({ api_key: apiKey, base_url: baseUrl, model, year });
+
+    const checked = $$('#aiStudentList input[type=checkbox]:checked');
+    const selectedStudents = checked.map(cb => {
+      const id = Number(cb.value);
+      return students.find(s => s.student_id === id);
+    }).filter(Boolean);
+    if (selectedStudents.length === 0) { toast('Chưa chọn học sinh nào', 'error'); return; }
+
+    btnRun.disabled = true;
+    progressText.textContent = '⏳ Bắt đầu tổng hợp cho ' + selectedStudents.length + ' học sinh...';
+    progressText.style.color = '#6b7280';
+    lastResults = [];
+    gridPane.innerHTML = ''; tablePane.innerHTML = '';
+    errorBox.innerHTML = '';
+    errorBox.style.display = 'none';
+
+    const errorList = []; // [{name, message}] để hiển thị chi tiết
+
+    let ok = 0, fail = 0;
+    for (let i = 0; i < selectedStudents.length; i++) {
+      const stu = selectedStudents[i];
+      progressText.textContent = '⏳ Đang tổng hợp ' + (i + 1) + '/' + selectedStudents.length + ' — ' + stu.full_name + '...';
+      const pct = Math.round(((i) / selectedStudents.length) * 100);
+      $('#aiProgressBar').style.width = pct + '%';
+
+      try {
+        // Lấy notes chi tiết của HS trong tháng
+        const notesData = await api('/students/' + stu.student_id + '/notes?year=' + year + '&month=' + month);
+        const totalSessions = Number(notesData.total_sessions_in_month || (notesData.notes || []).length || 0);
+        if (totalSessions === 0) {
+          lastResults.push({ student: stu, result: { text: '', error: 'Tháng này chưa có buổi học nào' } });
+          fail++;
+          continue;
+        }
+        const monthlySummary = buildMonthlySummaryForLLM(stu, notesData.notes || []);
+        const payload = {
+          api_key: apiKey, base_url: baseUrl, model,
+          student_id: stu.student_id,
+          student_name: stu.full_name,
+          year, month,
+          grade_level: gradeLevel,
+          monthly_summary: monthlySummary,
+          notes: (notesData.notes || []).map(n => ({
+            date: n.session_date,
+            note: n.teacher_note,
+            lesson_score: n.lesson_score,
+            exercise_score: n.exercise_score,
+            present: n.is_present,
+            video_done: n.video_lesson_done,
+            exercise_online_done: n.exercise_online_done,
+          })),
+        };
+        console.log('[LLM] →', stu.full_name, payload);
+        const r = await api('/ai/summarize-notes', { method: 'POST', body: payload });
+        console.log('[LLM] ←', stu.full_name, r);
+        lastResults.push({ student: stu, result: { text: r.summary, model: r.model, tokens: r.usage?.total_tokens } });
+        ok++;
+      } catch (err) {
+        console.error('[LLM] ✗', stu.full_name, err);
+        lastResults.push({ student: stu, result: { text: '', error: err.message } });
+        errorList.push({ name: stu.full_name, message: err.message });
+        fail++;
+      }
+      // Render ngay kết quả từng HS (progressive)
+      renderResults(lastResults);
+    }
+    $('#aiProgressBar').style.width = '100%';
+    progressText.textContent = '✅ Hoàn tất: ' + ok + ' thành công, ' + fail + ' lỗi';
+    progressText.style.color = fail > 0 ? '#d97706' : '#059669';
+    // Hiện errorBox chi tiết
+    if (errorList.length > 0) {
+      errorBox.style.display = '';
+      errorBox.innerHTML = '';
+      errorBox.appendChild(el('div', { style: { fontWeight: '600', marginBottom: '6px' } },
+        '⚠ Chi tiết lỗi (' + errorList.length + ' học sinh):'));
+      const sample = errorList.slice(0, 5);
+      sample.forEach(e => {
+        errorBox.appendChild(el('div', { style: { marginTop: '4px', paddingLeft: '8px', borderLeft: '3px solid #dc2626' } },
+          el('strong', {}, '• ' + e.name + ': '),
+          el('span', { style: { fontFamily: 'monospace', fontSize: '12px' } }, e.message)
+        ));
+      });
+      if (errorList.length > 5) {
+        errorBox.appendChild(el('div', { style: { marginTop: '6px', fontStyle: 'italic', color: '#6b7280' } },
+          '... và ' + (errorList.length - 5) + ' lỗi khác. Xem Console (F12) để biết chi tiết.'));
+      }
+      errorBox.appendChild(el('div', { style: { marginTop: '8px', fontSize: '12px', color: '#6b7280' } },
+        '💡 Mở DevTools (F12) → tab Console để xem payload đầy đủ của từng HS.'));
+    }
+    btnRun.disabled = false;
+    updateSelCount();
+  });
+
+  updateSelCount();
+  return root;
 }
 
 // =====================================================
@@ -1889,179 +2460,7 @@ async function renderStudentStats(parts) {
     }
     main.appendChild(card);
 
-    // ============= Tổng hợp nhận xét bằng LLM =============
-    const aiCard = el('div', { class: 'card', style: { background: 'var(--warning-bg)', borderLeft: '4px solid var(--warning)' } });
-    aiCard.appendChild(el('h3', {}, '🤖 Tổng hợp nhận xét tháng bằng AI'));
-    aiCard.appendChild(el('p', { class: 'muted text-sm' },
-      'Tổng hợp tất cả nhận xét trong tháng của học sinh này thành 1 đoạn nhận xét chung. ' +
-      'Hệ thống tự động phát hiện cấp học (cấp 1 / lớp 1-5) để tạo giọng văn phù hợp. ' +
-      'API key / base url chỉ dùng để gọi LLM, không lưu trên server.'));
-
-    // Hàng chọn tháng + nhập API
-    const lsKey = 'llm_settings_v1';
-    const saved = (() => { try { return JSON.parse(localStorage.getItem(lsKey) || '{}'); } catch { return {}; } })();
-
-    const aiForm = el('div', { class: 'form-grid' });
-    // Tháng
-    const aiNow = new Date();
-    const monthSel = el('select', { id: 'aiMonth' },
-      ...Array.from({ length: 12 }, (_, i) => {
-        const m = i + 1;
-        const txt = `Tháng ${m}/${aiNow.getFullYear()}`;
-        return el('option', { value: m, selected: m === (aiNow.getMonth() + 1) ? 'selected' : null }, txt);
-      })
-    );
-    const yearInp = el('input', { type: 'number', id: 'aiYear', value: String(saved.year || aiNow.getFullYear()), min: '2020', max: '2100' });
-    aiForm.appendChild(el('div', { class: 'form-row' }, el('label', {}, 'Tháng'), monthSel));
-    aiForm.appendChild(el('div', { class: 'form-row' }, el('label', {}, 'Năm'), yearInp));
-
-    // API key
-    const keyInp = el('input', { type: 'password', id: 'aiKey', placeholder: 'sk-...', value: saved.api_key || '' });
-    aiForm.appendChild(el('div', { class: 'form-row' },
-      el('label', {}, '🔑 API key (lưu local)'),
-      keyInp
-    ));
-    // Base URL
-    const baseInp = el('input', { type: 'text', id: 'aiBase', placeholder: 'https://api.openai.com', value: saved.base_url || 'https://api.openai.com' });
-    aiForm.appendChild(el('div', { class: 'form-row' },
-      el('label', {}, '🌐 Base URL'),
-      baseInp
-    ));
-    // Model
-    const modelInp = el('input', { type: 'text', id: 'aiModel', placeholder: 'gpt-4o-mini', value: saved.model || 'gpt-4o-mini' });
-    aiForm.appendChild(el('div', { class: 'form-row' },
-      el('label', {}, '🧠 Model'),
-      modelInp
-    ));
-    aiCard.appendChild(aiForm);
-
-    const btnRow = el('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' } });
-    const btnSum = el('button', { class: 'btn', type: 'button' }, '✨ Tổng hợp nhận xét tháng');
-    const btnSave = el('button', { class: 'btn btn-secondary', type: 'button' }, '💾 Lưu cấu hình');
-    const noteCountSpan = el('span', { id: 'aiNoteCount', style: { color: '#6b7280', fontSize: '14px' } }, 'Đang đếm nhận xét...');
-    btnRow.appendChild(btnSum);
-    btnRow.appendChild(btnSave);
-    btnRow.appendChild(noteCountSpan);
-    aiCard.appendChild(btnRow);
-
-    const aiResult = el('div', { id: 'aiResult', style: { marginTop: '16px' } });
-    aiCard.appendChild(aiResult);
-    main.appendChild(aiCard);
-
-    // Đếm số note trong tháng hiện tại + cập nhật khi đổi tháng
-    async function refreshNoteCount() {
-      try {
-        const m = Number($('#aiMonth').value);
-        const y = Number($('#aiYear').value);
-        const d = await api('/students/' + studentId + '/notes?year=' + y + '&month=' + m);
-        noteCountSpan.textContent = 'Có ' + d.total_notes + ' nhận xét trong tháng ' + m + '/' + y;
-        return d;
-      } catch (e) {
-        noteCountSpan.textContent = '(lỗi đếm note)';
-        return null;
-      }
-    }
-    monthSel.addEventListener('change', refreshNoteCount);
-    yearInp.addEventListener('change', refreshNoteCount);
-    refreshNoteCount();
-
-    // Nút lưu cấu hình
-    btnSave.addEventListener('click', () => {
-      const cfg = {
-        api_key: $('#aiKey').value.trim(),
-        base_url: $('#aiBase').value.trim(),
-        model: $('#aiModel').value.trim(),
-        year: Number($('#aiYear').value),
-      };
-      localStorage.setItem(lsKey, JSON.stringify(cfg));
-      toast('Đã lưu cấu hình LLM vào trình duyệt', 'success');
-    });
-
-    // Nút tổng hợp
-    btnSum.addEventListener('click', async () => {
-      const api_key = $('#aiKey').value.trim();
-      const base_url = $('#aiBase').value.trim();
-      const model = $('#aiModel').value.trim();
-      const m = Number($('#aiMonth').value);
-      const y = Number($('#aiYear').value);
-      if (!api_key) { toast('Vui lòng nhập API key', 'error'); return; }
-
-      // Lưu cấu hình luôn
-      localStorage.setItem(lsKey, JSON.stringify({ api_key, base_url, model, year: y }));
-
-      aiResult.innerHTML = '';
-      aiResult.appendChild(el('p', { style: { color: '#6b7280' } }, '⏳ Đang gọi LLM...'));
-      btnSum.disabled = true; btnSum.textContent = '⏳ Đang tổng hợp...';
-      try {
-        const data = await api('/students/' + studentId + '/notes?year=' + y + '&month=' + m);
-        if (data.total_notes === 0) {
-          aiResult.innerHTML = '';
-          aiResult.appendChild(el('div', { class: 'empty', style: { background: '#fef3c7', color: '#92400e' } },
-            '⚠ Tháng ' + m + '/' + y + ' chưa có nhận xét nào cho học sinh này. Hãy nhập nhận xét ở các buổi học trước rồi thử lại.'));
-          return;
-        }
-
-        // Tổng hợp số liệu tháng từ history để gửi cho LLM
-        const mStats = history.month_stats || {};
-        const mPresent = Number(mStats.present_count || 0);
-        const mAbsent  = Number(mStats.absent_count || 0);
-        const mTotal   = Number(mStats.total_sessions || (mPresent + mAbsent));
-        const mUnmarked = Math.max(0, mTotal - mPresent - mAbsent);
-        const monthlySummary = {
-          total_sessions: mTotal,
-          present: mPresent,
-          absent: mAbsent,
-          unmarked: mUnmarked,
-          avg_lesson_score: mStats.avg_lesson_score,
-          avg_exercise_score: mStats.avg_exercise_score,
-          video_done: Number(mStats.video_done_count || 0),
-          exercise_online_done: Number(mStats.exercise_done_count || 0),
-        };
-
-        const r = await api('/ai/summarize-notes', {
-          method: 'POST',
-          body: {
-            api_key, base_url, model,
-            student_id: Number(studentId),
-            student_name: studentList.full_name,
-            year: y, month: m,
-            grade_level: gradeLevel,
-            monthly_summary: monthlySummary,
-            notes: data.notes.map(n => ({
-              date: n.session_date,
-              note: n.teacher_note,
-              lesson_score: n.lesson_score,
-              exercise_score: n.exercise_score,
-              present: n.is_present,
-            })),
-          }
-        });
-        aiResult.innerHTML = '';
-        const summaryBox = el('div', { class: 'card', style: { background: '#f0fdf4', borderLeft: '4px solid #059669' } });
-        summaryBox.appendChild(el('h4', {}, '📝 Nhận xét chung tháng ' + m + '/' + y + ' cho ' + studentList.full_name));
-        const p = el('p', { style: { whiteSpace: 'pre-wrap', lineHeight: '1.7' } });
-        p.textContent = r.summary;
-        summaryBox.appendChild(p);
-        if (r.model) {
-          summaryBox.appendChild(el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '8px' } },
-            'Model: ' + r.model + (r.usage ? ' • Tokens: ' + (r.usage.total_tokens || '?') : '')));
-        }
-        // Nút copy
-        const btnCopy = el('button', { class: 'btn btn-sm btn-secondary', type: 'button', style: { marginTop: '8px' },
-          onClick: () => {
-            navigator.clipboard.writeText(r.summary).then(() => toast('Đã copy nhận xét', 'success'));
-          }
-        }, '📋 Copy');
-        summaryBox.appendChild(btnCopy);
-        aiResult.appendChild(summaryBox);
-      } catch (err) {
-        aiResult.innerHTML = '';
-        aiResult.appendChild(el('div', { class: 'card empty', style: { background: '#fee2e2', color: '#991b1b' } },
-          '❌ Lỗi: ' + err.message));
-      } finally {
-        btnSum.disabled = false; btnSum.textContent = '✨ Tổng hợp nhận xét tháng';
-      }
-    });
+    // (Card 🤖 Tổng hợp nhận xét bằng AI đã được chuyển sang trang Thống kê lớp (#class-stats/<id>/<year>/<month>) — bấm vào tên HS phía trên bảng thống kê sẽ có cấu hình LLM và tổng hợp cho cả lớp 1 lần.)
 
     // Nút về lớp
     main.appendChild(el('div', { style: { marginTop: '16px' } },

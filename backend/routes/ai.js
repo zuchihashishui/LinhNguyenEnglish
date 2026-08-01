@@ -1,7 +1,10 @@
 // Tổng hợp nhận xét bằng LLM (OpenAI-compatible API)
 // Body: { api_key, base_url, model, student_id, student_name, year, month,
-//         notes:[{date, note, lesson_score, exercise_score, grade, present}],
-//         monthly_summary: {total_sessions, present, absent, unmarked, avg_lesson_score, avg_exercise_score} }
+//         notes:[{date, note, lesson_score, exercise_score, video_done, exercise_online_done,
+//                 present}],
+//         monthly_summary: {total_sessions, present, absent, unmarked, video_done, exercise_online_done,
+//                           avg_lesson_score, avg_exercise_score,
+//                           lesson_trend, exercise_trend, low_score_sessions} }
 // Trả về: { summary, model, usage }
 
 const express = require('express');
@@ -29,7 +32,7 @@ router.post('/summarize-notes', async (req, res) => {
       return res.status(400).json({ error: 'Thiếu API key' });
     }
     if (!Array.isArray(notes) || notes.length === 0) {
-      return res.status(400).json({ error: 'Không có nhận xét nào trong tháng này để tổng hợp' });
+      return res.status(400).json({ error: 'Không có buổi học nào trong tháng này để tổng hợp' });
     }
 
     // Kiểm tra quyền truy cập HS (nếu có student_id)
@@ -57,6 +60,11 @@ router.post('/summarize-notes', async (req, res) => {
     const rate     = total > 0 ? Math.round((present / total) * 100) : null;
     const avgLes   = summary.avg_lesson_score != null ? Number(summary.avg_lesson_score) : null;
     const avgEx    = summary.avg_exercise_score != null ? Number(summary.avg_exercise_score) : null;
+    const videoDone = Number(summary.video_done || 0);
+    const exerciseOnlineDone = Number(summary.exercise_online_done || 0);
+    const lessonTrend = summary.lesson_trend || null;       // 'up' | 'down' | 'flat' | null
+    const exerciseTrend = summary.exercise_trend || null;
+    const lowScoreSessions = Array.isArray(summary.low_score_sessions) ? summary.low_score_sessions : [];
 
     // Prompt: nhận xét học sinh tiểu học (cấp 1: lớp 1-5)
     const noteLines = notes.map((n, i) => {
@@ -66,7 +74,8 @@ router.post('/summarize-notes', async (req, res) => {
       else parts.push('Chưa điểm danh');
       if (n.lesson_score != null) parts.push('Điểm bài cũ: ' + n.lesson_score + '/10');
       if (n.exercise_score != null) parts.push('Điểm bài tập: ' + n.exercise_score + '/10');
-      if (n.grade) parts.push('Xếp loại: ' + n.grade);
+      if (n.video_done === 1) parts.push('Quay video bài cũ: ✓');
+      if (n.exercise_online_done === 1) parts.push('Làm bài tập online: ✓');
       if (n.note) parts.push('GV nhận xét: ' + n.note);
       return '- ' + parts.join(' | ');
     }).join('\n');
@@ -75,6 +84,9 @@ router.post('/summarize-notes', async (req, res) => {
     const gl = parseInt(grade_level);
     const isPrimary = !isNaN(gl) ? (gl >= 1 && gl <= 5) : true; // mặc định coi như cấp 1
     const levelLabel = isPrimary ? 'tiểu học (cấp 1, lớp 1-5)' : 'trung học';
+    const styleHints = isPrimary
+      ? 'Xưng hô "con/bé", giọng ấm áp, khích lệ, dùng từ ngữ gần gũi (ví dụ: "con làm tốt lắm", "con tiến bộ rõ rệt", "mẹ ơi hãy cùng con..."). Tránh dùng từ chuyên môn nặng.'
+      : 'Giọng văn rõ ràng, đi thẳng vào điểm số và đánh giá, xưng "em/học sinh".';
 
     // Tổng hợp số liệu tháng để đưa vào prompt
     const statsLines = [];
@@ -85,15 +97,29 @@ router.post('/summarize-notes', async (req, res) => {
     if (rate != null) statsLines.push(`- Tỉ lệ chuyên cần: ${rate}%`);
     if (avgLes != null) statsLines.push(`- Điểm trung bình bài cũ: ${avgLes}/10`);
     if (avgEx != null) statsLines.push(`- Điểm trung bình bài tập: ${avgEx}/10`);
+    statsLines.push(`- Số buổi quay video bài cũ: ${videoDone}/${total}` + (total > 0 ? ` (${Math.round(videoDone/total*100)}%)` : ''));
+    statsLines.push(`- Số buổi nộp bài tập online: ${exerciseOnlineDone}/${total}` + (total > 0 ? ` (${Math.round(exerciseOnlineDone/total*100)}%)` : ''));
+    if (lessonTrend) {
+      const trendText = lessonTrend === 'up' ? 'tăng dần (tiến bộ)' : lessonTrend === 'down' ? 'giảm dần (cần lưu ý)' : 'ổn định';
+      statsLines.push(`- Xu hướng điểm bài cũ: ${trendText}`);
+    }
+    if (exerciseTrend) {
+      const trendText = exerciseTrend === 'up' ? 'tăng dần (tiến bộ)' : exerciseTrend === 'down' ? 'giảm dần (cần lưu ý)' : 'ổn định';
+      statsLines.push(`- Xu hướng điểm bài tập: ${trendText}`);
+    }
+    if (lowScoreSessions.length > 0) {
+      statsLines.push(`- Các buổi điểm bài cũ/bài tập thấp (≤ 5): ${lowScoreSessions.join(', ')}`);
+    }
 
     const sysPrompt = `Bạn là một giáo viên tiếng Anh tại Việt Nam, đang viết nhận xét tổng kết hàng tháng cho học sinh ${levelLabel}. \
-Nhiệm vụ: dựa trên (1) tất cả nhận xét của giáo viên trong tháng, (2) thông tin điểm danh, (3) điểm bài cũ, điểm bài tập, \
-hãy viết MỘT đoạn nhận xét tổng hợp (khoảng 4-7 câu, 120-200 từ) bằng tiếng Việt, giọng văn ấm áp, khích lệ, phù hợp với lứa tuổi ${isPrimary ? 'tiểu học' : ''}. \
+${styleHints} \
+Nhiệm vụ: dựa trên (1) tất cả nhận xét của giáo viên trong tháng, (2) thông tin điểm danh, (3) điểm bài cũ và điểm bài tập, (4) tình hình quay video bài cũ và làm bài tập online ở nhà, (5) xu hướng điểm số qua từng buổi, \
+hãy viết MỘT đoạn nhận xét tổng hợp (khoảng 5-8 câu, 150-220 từ) bằng tiếng Việt. \
 Cấu trúc đoạn nhận xét nên đề cập: \
-  (1) Sự chuyên cần / thái độ học tập của bé trong tháng. \
-  (2) Điểm mạnh nổi bật (ví dụ: tích cực phát biểu, hoàn thành tốt bài tập, tiến bộ về từ vựng/ngữ pháp/...). \
-  (3) Điểm cần cải thiện (ví dụ: cần luyện thêm phát âm, cần chú ý nghe giảng, ...). \
-  (4) Gợi ý cụ thể cho phụ huynh hỗ trợ ở nhà. \
+  (1) Sự chuyên cần / thái độ học tập của con trong tháng (tỉ lệ đi học). \
+  (2) Điểm mạnh nổi bật — cụ thể hoá bằng con số: điểm bài cũ/bài tập TB, số buổi quay video, số buổi nộp bài tập online, hoặc những buổi có điểm cao. \
+  (3) Điểm cần cải thiện — nếu có xu hướng giảm hoặc buổi điểm thấp, hãy nêu cụ thể (ví dụ: "điểm bài cũ giảm ở các buổi 5, 8", "tỉ lệ quay video còn thấp"). \
+  (4) Gợi ý cụ thể cho phụ huynh hỗ trợ ở nhà (ví dụ: nghe lại bài cũ 10 phút mỗi tối, quay video con đọc bài, cùng con làm bài tập online...). \
 Yêu cầu: trả về ĐÚNG MỘT đoạn văn tiếng Việt, KHÔNG bullet point, KHÔNG JSON, KHÔNG tiêu đề, KHÔNG giải thích thêm, KHÔNG ký tự đặc biệt Markdown.`;
 
     const userPrompt = `Học sinh: ${student_name || 'HS'}\nTháng: ${month}/${year}\n\nThống kê điểm danh và điểm số trong tháng:\n${statsLines.join('\n')}\n\nNhật ký các buổi học trong tháng:\n${noteLines}`;
@@ -105,7 +131,7 @@ Yêu cầu: trả về ĐÚNG MỘT đoạn văn tiếng Việt, KHÔNG bullet p
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.7,
-      max_tokens: 600,
+      max_tokens: 700,
     };
 
     const r = await fetch(base + '/chat/completions', {

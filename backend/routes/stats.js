@@ -50,6 +50,8 @@ router.get('/:id/stats', async (req, res) => {
          s.student_code AS student_code,
          SUM(CASE WHEN a.is_present = 1 THEN 1 ELSE 0 END) AS present_count,
          SUM(CASE WHEN a.is_present = 0 THEN 1 ELSE 0 END) AS absent_count,
+         SUM(CASE WHEN a.video_lesson_done = 1 THEN 1 ELSE 0 END) AS video_done_count,
+         SUM(CASE WHEN a.exercise_online_done = 1 THEN 1 ELSE 0 END) AS exercise_done_count,
          ROUND(AVG(a.lesson_score), 2)   AS avg_score,
          ROUND(AVG(a.exercise_score), 2) AS avg_exercise_score
        FROM students s
@@ -80,6 +82,8 @@ router.get('/:id/stats', async (req, res) => {
         unmarked_count: Math.max(0, unmarked),
         total_marked: total,
         attendance_rate: rate,
+        video_done_count: Number(r.video_done_count || 0),
+        exercise_done_count: Number(r.exercise_done_count || 0),
         avg_score: r.avg_score != null ? Number(r.avg_score) : null,
         avg_exercise_score: r.avg_exercise_score != null ? Number(r.avg_exercise_score) : null,
       };

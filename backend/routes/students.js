@@ -103,7 +103,9 @@ router.get('/students/:id', async (req, res) => {
 });
 
 // GET /api/students/:id/notes?year=&month=
-// Trả về danh sách nhận xét (teacher_note) theo tháng của 1 học sinh
+// Trả về TẤT CẢ các buổi trong tháng của 1 học sinh (kể cả buổi vắng / không có teacher_note),
+// kèm đầy đủ điểm bài cũ, điểm bài tập, trạng thái video bài cũ / bài tập online.
+// total_notes vẫn đếm số buổi có teacher_note (để tương thích ngược với phần "Có N nhận xét").
 router.get('/students/:id/notes', async (req, res) => {
   try {
     const studentId = req.params.id;
@@ -123,23 +125,43 @@ router.get('/students/:id/notes', async (req, res) => {
       return res.status(403).json({ error: 'Bạn không phụ trách lớp của HS này' });
     }
 
+    // Lấy TẤT CẢ buổi trong tháng (kể cả buổi HS chưa được tick attendance) để LLM có dữ liệu chính xác.
+    // Trước đây JOIN attendances vô tình loại bỏ buổi HS chưa tick → LLM tưởng HS không có buổi nào.
     const [rows] = await pool.query(
-      `SELECT a.id, a.session_id, a.teacher_note, a.lesson_score, a.is_present,
-              s.session_date, s.title AS session_title
-         FROM attendances a
-         JOIN sessions s ON s.id = a.session_id
-        WHERE a.student_id = ?
+      `SELECT s.id AS session_id, s.session_date, s.title AS session_title,
+              a.id AS attendance_id,
+              a.teacher_note, a.lesson_score, a.exercise_score, a.is_present,
+              a.video_lesson_done, a.exercise_online_done
+         FROM sessions s
+         LEFT JOIN attendances a
+           ON a.session_id = s.id
+          AND a.student_id = ?
+        WHERE s.class_id = ?
           AND s.session_date BETWEEN ? AND ?
-          AND (a.teacher_note IS NOT NULL AND TRIM(a.teacher_note) <> '')
         ORDER BY s.session_date ASC`,
-      [studentId, from, to]
+      [studentId, sRows[0].class_id, from, to]
     );
 
+    // Chuẩn hoá: nếu HS chưa tick 1 buổi nào, attendance_id sẽ null → is_present, điểm, note cũng null.
+    const normalized = rows.map(r => ({
+      session_id: r.session_id,
+      session_date: r.session_date,
+      session_title: r.session_title,
+      teacher_note: r.teacher_note,
+      lesson_score: r.lesson_score,
+      exercise_score: r.exercise_score,
+      is_present: r.is_present,
+      video_lesson_done: r.video_lesson_done,
+      exercise_online_done: r.exercise_online_done,
+    }));
+
+    const total_notes = normalized.filter(r => r.teacher_note && String(r.teacher_note).trim() !== '').length;
     res.json({
       student: sRows[0],
       period: { year, month, from, to },
-      total_notes: rows.length,
-      notes: rows,
+      total_notes,
+      total_sessions_in_month: normalized.length,
+      notes: normalized,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
